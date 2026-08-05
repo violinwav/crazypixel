@@ -1,4 +1,4 @@
-export type PlayerId = 0 | 1 | 2 | 3;
+export type PlayerId = 0 | 1 | 2 | 3 | 4 | 5;
 
 export type Suit = 'spades' | 'hearts' | 'diamonds' | 'clubs';
 
@@ -15,7 +15,8 @@ export type Zone = 'kennel' | 'track' | 'home';
 
 export interface MarbleLocation {
   zone: Zone;
-  /** kennel: 0-3 slot. track: 0-63 global index. home: 0-3 home-stretch slot. */
+  /** kennel: 0-3 slot. track: global index, range depends on player count (ARM_LENGTH *
+   * playerCount). home: 0-(HOME_STRETCH_LENGTH-1) home-stretch slot. */
   index: number;
 }
 
@@ -27,8 +28,18 @@ export interface Marble {
 
 export type GamePhase = 'dealing' | 'cardPass' | 'playing' | 'roundEnd' | 'gameEnd';
 
+export type GameMode = 'ffa' | 'teams';
+
+export interface GameConfig {
+  playerCount: 2 | 4 | 6;
+  mode: GameMode;
+}
+
 export interface GameState {
+  config: GameConfig;
   marbles: Marble[];
+  /** Always all 6 slots allocated regardless of config.playerCount - simpler than a
+   * partial/sparse record, and inactive slots just stay empty arrays, never iterated. */
   hands: Record<PlayerId, Card[]>;
   drawPile: Card[];
   discardPile: Card[];
@@ -38,7 +49,9 @@ export interface GameState {
   dealerIndex: PlayerId;
   currentPlayer: PlayerId;
   phase: GamePhase;
-  winningTeam: 0 | 1 | null;
+  /** The player(s) who got every marble home first - both members of a team in 'teams'
+   * mode, a single player in 'ffa'. */
+  winners: PlayerId[] | null;
 }
 
 export type Move =
@@ -46,5 +59,6 @@ export type Move =
   | { kind: 'moveMarble'; card: Card; marbleId: string; steps: number }
   | { kind: 'splitSeven'; card: Card; steps: { marbleId: string; steps: number }[] }
   | { kind: 'swapJack'; card: Card; marbleIdA: string; marbleIdB: string }
-  | { kind: 'forceDraw'; card: Card; targetPlayer: PlayerId }
-  | { kind: 'copyLastCard'; card: Card; innerMove: Move };
+  | { kind: 'forceDraw'; card: Card; targetPlayer: PlayerId; targetCardIndex: number }
+  | { kind: 'copyLastCard'; card: Card; innerMove: Move }
+  | { kind: 'wildAs'; card: Card; asRank: CardRank; innerMove: Move };

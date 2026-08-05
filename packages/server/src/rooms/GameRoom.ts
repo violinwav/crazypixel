@@ -15,7 +15,9 @@ import type { GameState } from '@crazypixel/shared';
  */
 export class GameRoom extends Room {
   maxClients = 4;
-  gameState: GameState = createInitialState();
+  // Placeholder config until room creation actually takes options from the lobby (see
+  // Lobby.tsx client-side) - matches maxClients above, not a real networking decision yet.
+  gameState: GameState = createInitialState({ playerCount: 4, mode: 'ffa' });
 
   onCreate() {
     console.log('GameRoom created');

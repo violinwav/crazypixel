@@ -1,67 +1,109 @@
-# CrazyPixel
+# CrazyPixel 🎲
 
-Pixel-art, retro-styled take on the Swiss card/board game *Brändi Dog*, with two house rules:
+A pixel-art web clone of **Brändi Dog** (the Swiss marble-race card game) with a set of
+"crazy" house rules layered on top — split sevens, a wild joker, blind steals, and more.
+Built as a monorepo: a pure TypeScript rules engine, a React + Phaser client, and a Colyseus
+server skeleton for future online play.
 
-- **2**: move 2, or force an opponent to draw a card.
-- **8**: move 8, or replay the effect of whatever card was played last.
+> Not affiliated with Stiftung Brändi. Game rules aren't copyrightable, so the mechanics are
+> reimplemented from scratch here — but the name, art, and copy are original to this project,
+> deliberately independent of theirs.
 
-Not affiliated with Stiftung Brändi. Game mechanics aren't copyrightable, so the rules are
-reimplemented from scratch here — but the artwork, text and the "Brändi" name are original
-to Stiftung Brändi. Keep this project's name/art/copy independent of theirs, especially if
-it ever goes public.
+## Play it
 
-## Stack
-
-- **packages/shared** — pure TypeScript rules engine (deck, board, legal moves, move
-  application). No rendering or network code. Runs identically on the client (local play)
-  and, later, inside the server room (as the authority for online play).
-- **packages/client** — Vite + React shell around a Phaser 3 canvas. React owns menus/lobby
-  (cheap to build there, and where session/join-code UI will live later); Phaser owns the
-  board.
-- **packages/server** — Colyseus skeleton. Boots, not wired to real games yet — see Status.
-
-## Running it
+Local hotseat only for now — 2, 4, or 6 players pass one device around.
 
 ```bash
 npm install
-npm run dev:client   # http://localhost:5173
-npm run dev:server   # ws://localhost:2567 (boots, not yet playable)
+npm run dev:client
+```
+
+Open `http://localhost:5173`, pick a player count and mode (free-for-all or 2v2 partners),
+and start playing.
+
+## The rules
+
+Standard Brändi Dog — race four marbles around a shared track and into your home stretch,
+using a deck of playing cards to move — plus these house rules:
+
+| Card | Effect |
+|---|---|
+| **A / K** | Bring a marble out of your base, or move 1 / 11 (Ace) or 13 (King) spaces. |
+| **2** | Move 2 spaces, **or** force an opponent to draw a card blind from your hand. |
+| **4** | Move 4 spaces forward or backward. Landing exactly on your own base square while going backward earns entry into your home stretch on a later move, without needing a full extra lap. |
+| **7** | Split 7 steps across up to 7 of your (or your partner's) marbles, moved one at a time — you can hop a blocked teammate out of the way and then finish another marble in the same play, but marbles already in the home stretch can't be jumped over. |
+| **8** | Move 8 spaces, **or** replay whatever the previous card did. |
+| **J** | Swap the positions of any two marbles on the track (not your own marble still guarding its base). |
+| **Joker** | Play as any other rank, including starting a marble. |
+
+A marble sitting on your own base square blocks that square for everyone, including your own
+other marbles. Landing on an opponent sends their marble straight back to their base. A
+player with no legal move for any card in hand discards their whole hand and sits out until
+the next round's redeal.
+
+## Stack
+
+```
+packages/shared   pure TypeScript rules engine — deck, board, legal-move generation, move
+                   application. No rendering, no network. Framework-agnostic by design so
+                   the same engine can run authoritatively on a future server.
+
+packages/client    Vite + React + Phaser 3. React owns the lobby and the accessible DOM
+                   overlay (hand of cards, tap targets for legal moves); Phaser renders the
+                   board itself on a Canvas 2D renderer, hand-drawn pixel-art sprites
+                   generated procedurally (see below), no external art assets.
+
+packages/server     Colyseus skeleton for future online multiplayer. Boots, but isn't wired
+                   to real games yet — see Status.
 ```
 
 ## Status
 
-**Implemented:** deck/dealing, round size cycling (6→5→4→3→2), starting marbles, normal
-movement with landing capture, the start-square blockade, the Jack swap, the 7-card split
-(with its pass-over capture), and both custom rules (2 and 8).
+**Playable today:** full local hotseat games for 2/4/6 players, free-for-all or 2v2 partners,
+with every house rule above implemented — deck/dealing, round-size cycling, capturing,
+blockades, home-stretch entry, and win detection.
 
-**Not implemented yet:**
+**Not implemented:**
 
-- **Home stretch entry / win condition.** The source rulebook's wording on exactly when a
-  marble may leave the main loop for home was ambiguous in translation — marbles currently
-  just loop the 64-square track forever. See the TODO in `GameEngine.ts`. Needs a rules
-  clarification pass before the game is actually winnable.
-- **Turn order enforcement / Zugzwang** (must play a legal move if one exists). The engine
-  exposes `getLegalMoves`; nothing yet forces the UI/room to use it.
-- **Online sessions.** `packages/server` boots but `GameRoom` just holds a fresh game state.
-  State isn't yet expressed as `@colyseus/schema` (needed for real client-server sync), and
-  no moves are wired through it. The shared engine was written so this is additive, not a
-  rewrite — the room will call the same `getLegalMoves` / `applyMove` used locally today.
+- **Online multiplayer.** `packages/server` boots but isn't wired to real games — state isn't
+  yet expressed as `@colyseus/schema`, and no moves are routed through it. The shared engine
+  was written so this is additive, not a rewrite: a real game room would call the same
+  `getLegalMoves` / `applyMove` the client already uses locally.
+- **Card-passing sub-phase** (each player passes one card to their partner before a round
+  starts, in Partners mode) — a real rule, not yet wired to any UI.
 
-## Assumptions worth double-checking against your own read of the rules
+## Design
 
-- Copying an 8 with another 8 is disallowed (must move 8 instead) — avoids open-ended
-  recursion, wasn't specified in the source text.
-- Custom 2's "draw opponent's card" targets any player on the other team, chosen by the
-  player who played the 2.
-- The blockade blocks *everyone*, including the guarding player's own other marbles, per a
-  literal read of "auch für die eigenen gesperrt."
+- Fully custom pixel-art UI: no component library, no external art. Cards, marbles, board
+  tiles, and the background are all procedurally generated or hand-styled.
+- Mobile-first — the whole board and hand panel are built to fit and stay tappable on a
+  phone screen, not just scaled down from desktop.
+- Every legal move is a real, accessible `<button>` positioned over the board (not a Phaser
+  canvas element) — the game is playable with a keyboard or a screen reader, not just a mouse
+  or a touchscreen.
 
-## Design system
+### Sprite art
 
-- Palette, fonts and component styles live in `packages/client/src/styles/theme.css` and
-  `packages/client/src/game/theme.ts` (canvas needs the colors as numbers, CSS needs them as
-  strings — kept in sync by hand for now).
-- Display font (`Press Start 2P`) is reserved for short titles/headers — it's unreadable at
-  body-text sizes. Everything else uses `Pixelify Sans`, which is still pixel-styled but
-  legible at small sizes.
-- Card suits are distinguished by glyph shape (♠ ♥ ♦ ♣), not color alone.
+`packages/client/scripts/generate-sprites.py` procedurally draws every sprite (card faces,
+card backs, board tiles, marbles) with Pillow — no AI image generation, and no hand-drawn
+image files checked into the repo. Regenerate after a palette tweak:
+
+```bash
+cd packages/client/scripts
+python3 generate-sprites.py   # requires: pip install pillow
+```
+
+Output goes to `packages/client/public/sprites/`, loaded once at boot by `TableScene`.
+
+## Development
+
+```bash
+npm install
+npm run dev:client     # client dev server, http://localhost:5173
+npm run dev:server     # server skeleton, ws://localhost:2567 (boots, not yet playable)
+npm run build           # builds shared, then client, then server
+npm run typecheck       # typechecks the shared package
+```
+
+The client and server packages typecheck on their own via `npx tsc --noEmit` inside each
+package directory (`packages/client`, `packages/server`).

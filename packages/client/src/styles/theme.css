@@ -1,17 +1,22 @@
 :root {
-  --bg-deep: #0d0a1f;
-  --bg-panel: #1a1435;
-  --bg-raised: #241c4a;
-  --ink: #f4f1ff;
-  --ink-dim: #b7aee0;
-  --accent: #ffd23f;
+  /* UI chrome is deliberately monochrome - color is reserved for cards (suit red/black)
+     and marbles (player colors below), not backgrounds/panels/buttons/tiles. */
+  --bg-deep: #000000;
+  --bg-panel: #181818;
+  --bg-raised: #2c2c2c;
+  --ink: #ffffff;
+  --ink-dim: #999999;
+  --accent: #ffffff;
 
   --player-red: #ff5470;
   --player-blue: #3fb0ff;
   --player-yellow: #ffe66d;
   --player-green: #38e58f;
+  --player-purple: #b967ff;
+  --player-orange: #ff9f40;
+  --card-red: #d22c50;
 
-  --focus-ring: var(--accent);
+  --focus-ring: var(--ink);
   --focus-ring-buffer: var(--bg-deep);
 
   --target-min-touch: 44px;
@@ -66,12 +71,12 @@ body {
 .cp-button {
   /* bg-panel/bg-raised/bg-deep sit at ~1:1 contrast to each other - the border is the
      boundary between surfaces, not the fill color. Don't drop this. */
-  border: 2px solid var(--ink-dim);
+  border: 3px solid var(--ink-dim);
 }
 
 .cp-panel {
   background: var(--bg-panel);
-  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.4);
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.4);
 }
 
 .cp-button {
@@ -83,13 +88,13 @@ body {
   background: var(--accent);
   color: var(--bg-deep);
   border-color: var(--bg-deep);
-  box-shadow: 3px 3px 0 var(--bg-deep);
+  box-shadow: 4px 4px 0 var(--bg-deep);
   padding: 0.6em 1.2em;
   cursor: pointer;
 }
 
 .cp-button:active {
-  transform: translate(2px, 2px);
+  transform: translate(3px, 3px);
   box-shadow: 1px 1px 0 var(--bg-deep);
 }
 
@@ -103,7 +108,712 @@ body {
   outline: none;
 }
 
+.cp-button:disabled {
+  background: var(--bg-raised);
+  color: var(--ink-dim);
+  border-color: var(--ink-dim);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.hand-panel {
+  /* No fill at all - the pixel-dither background (App.tsx's PixelDither) shows straight
+     through, same as everywhere else on screen, not a grey box sitting between it and the
+     cards. Fixed height, not content-driven - a hand of 2 cards or 6 shouldn't change how
+     much of the screen the board above gets; .hand-panel__cards below handles fitting
+     whatever count there is into one row within this same fixed height instead. */
+  height: 136px;
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+}
+
+.hand-panel-slot {
+  /* No transition here anymore. A 250ms crossfade sounds smoother than a hard cut, but the
+     deal animation's own cards vanish the INSTANT dealPlan clears (a plain unmount, no exit
+     fade of its own) - so a slow fade-IN on this side meant a real gap where neither the
+     deal clones nor the real hand were visible (opacity climbing from 0 for the first chunk
+     of that 250ms - confirmed live, read as the hand disappearing for a beat). Now that the
+     deal animation's cards land at the exact same position/size the real hand renders at
+     (see DealAnimation.tsx), a hard cut lines up seamlessly - nothing to crossfade. */
+}
+
+.hand-panel__cards {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+/* A fixed 1/6th-of-the-row width, not flex-grow dividing space among however many cards are
+   actually in hand right now - 2 cards and 6 cards render at the *same* size instead of a
+   short hand looking bigger than a full one, while still guaranteeing all 6 (the max, see
+   ROUND_DEAL_SIZES) fit one row without wrapping/overflowing on a narrow phone. Kept off the
+   base .playing-card class (below) since FlyingCard/DealAnimation/StealCardOverlay use that
+   class outside this flex row and set their own explicit sizes - the combined selector
+   (.playing-card.hand-panel__card, specificity 0,2,0) is deliberate, not just style:
+   .playing-card's own plain-class width:80px rule sits *after* this one in the file, and a
+   single-class selector here would have lost that tie and silently rendered every hand card
+   at a fixed 80px regardless of viewport (confirmed live - cards overflowed off both edges
+   of a 375px phone screen before this was a combined selector). */
+.playing-card.hand-panel__card {
+  flex: 0 0 auto;
+  width: calc((100% - 5 * 8px) / 6);
+  max-width: 80px;
+}
+
+/* Pixel-art card texture (see scripts/generate-sprites.py's make_card_face) applied as a
+   background-image via --card-face, set per-card in HandPanel/FlyingCard/DealAnimation -
+   color now encodes rank, not suit (suit stopped mattering for anything, rules or art). 80px
+   wide at its biggest - matches TableScene.ts's own CARD_WIDTH so the discard pile's card
+   and a hand card read as the same physical size, not two independently-tuned ones. Opacity
+   transition covers legality flipping mid-game and .hand-panel-slot's crossfade above -
+   without it a just-dealt illegal card would be dim the instant it appears rather than
+   settling into that state visibly. */
+.playing-card {
+  position: relative;
+  width: 80px;
+  aspect-ratio: 5 / 7;
+  height: auto;
+  background-image: var(--card-face);
+  background-size: 100% 100%;
+  image-rendering: pixelated;
+  border: none;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.5);
+  transition: transform 0.12s ease, opacity 300ms ease;
+}
+
+/* Classic corner-index rank display (see CardRankIndices.tsx) - top-left upright, bottom-
+   right rotated 180deg so it still reads right-side-up if the card were flipped, same trick
+   a real deck uses. A 4-direction shadow stack stands in for a text outline (border-image/
+   text-stroke isn't reliable enough across browsers here) so it stays readable over every
+   card color, not just a fixed black-on-white. */
+.playing-card__index {
+  position: absolute;
+  color: #ffffff;
+  font-family: var(--cp-font-display);
+  font-weight: 700;
+  font-size: 0.85rem;
+  line-height: 1;
+  text-shadow:
+    1px 0 0 #000000,
+    -1px 0 0 #000000,
+    0 1px 0 #000000,
+    0 -1px 0 #000000;
+}
+
+.playing-card__index--top {
+  top: 11px;
+  left: 11px;
+}
+
+.playing-card__index--bottom {
+  bottom: 11px;
+  right: 11px;
+  transform: rotate(180deg);
+}
+
+.playing-card[aria-pressed='true'] {
+  transform: translateY(-8px);
+  box-shadow: 2px 6px 0 rgba(0, 0, 0, 0.6);
+  outline: 3px solid var(--ink);
+  outline-offset: 3px;
+}
+
+/* HandPanel uses aria-disabled, not the native `disabled` attribute, specifically so this
+   stays a real transitionable element - see .playing-card--dim below. */
+.playing-card[aria-disabled='true'] {
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* Applied a beat after an illegal card first appears (see HandPanel.tsx's settle timer),
+   never on the same frame as aria-disabled itself - a brand-new DOM node has no prior state
+   to transition FROM, so putting the opacity directly on the disabled state meant it just
+   painted dim from frame one, at the same instant as the hand's own reveal (confirmed live -
+   read as a glitchy pop, not a settle). This class starts absent (full opacity, transition has
+   something real to interpolate from) and gets added afterward. */
+.playing-card--dim {
+  opacity: 0.35;
+}
+
+.playing-card:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+/* Board move highlights - see BoardOverlay.tsx. Real buttons positioned to match the glow
+   they render, not a separate text list. */
+.board-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Pass-hand fallback anchors to the draw/discard stack (see BoardStatus.tsx) - the turn
+   label itself lives outside the board now, right above the hand panel (see .turn-label). */
+.board-status__pass {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 0.8rem;
+  padding: 0.5em 1em;
+  max-width: min(80vw, 220px);
+  white-space: normal;
+  text-align: center;
+  line-height: 1.3;
+  pointer-events: auto;
+  z-index: 10;
+}
+
+/* Small, plain strip right above the hand panel (see TurnLabel.tsx) - not stacked on the
+   board over the ring's own kennel markers anymore. Crossfades on change instead of
+   snapping. */
+.turn-label {
+  margin: 0;
+  padding: 4px 0;
+  text-align: center;
+  font-family: var(--cp-font-display);
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--ink-dim);
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.turn-label--visible {
+  opacity: 1;
+}
+
+/* The actual tap target for a move's landing square - a small animated ring, not a filled
+   shape, so it reads as "tap here" without a big block of color sitting on the board. The
+   button itself keeps the full 44px hit area (WCAG 2.5.8's touch-target floor - see
+   BoardOverlay.tsx's TARGET_SIZE), but the visible circle drawn via ::before is deliberately
+   smaller than that box. The walked squares leading up to it (see .board-overlay__path-dot
+   below) are the solid-white ones - this is the one spot you actually tap, they're not. */
+.board-overlay__target {
+  position: absolute;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.board-overlay__target::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  border: 3px solid var(--ink);
+  animation: board-figure-pulse 1.4s ease-in-out infinite;
+}
+
+.board-overlay__target:hover::before,
+.board-overlay__target:focus-visible::before {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+@keyframes board-target-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Figure-select phase (pick a marble, a kennel piece, or an opponent's hand) sits directly
+   ON TOP of real board art - a filled disc there used to wash out the very piece being
+   picked. Instead: the button itself stays fully transparent (still a real 44px hit target,
+   see BoardOverlay.tsx's TARGET_SIZE), and a ring drawn OUTSIDE its box via ::before marks
+   it - bigger than the piece underneath, hollow in the middle, so nothing gets obscured. */
+.board-overlay__figure {
+  background: transparent;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  pointer-events: auto;
+  animation: none;
+}
+
+.board-overlay__figure::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  border: 3px solid var(--ink);
+  animation: board-figure-pulse 1.4s ease-in-out infinite;
+}
+
+.board-overlay__figure:hover::before,
+.board-overlay__figure:focus-visible::before {
+  border-color: var(--ink);
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.board-overlay__figure--opponent::before {
+  border-color: var(--card-red);
+}
+
+/* The 7-split's currently-selected marble (the one the slider below is adjusting) - a third
+   color distinct from both the plain figure ring and the opponent-steal red, so it's obvious
+   at a glance which marble the slider actually applies to among several eligible ones. */
+.board-overlay__figure--active::before {
+  border-color: var(--player-blue);
+}
+
+@keyframes board-figure-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+.board-overlay__back {
+  /* Was left:50%/bottom:12px - the exact same anchor .board-overlay__fallback uses, so the
+     two sat directly on top of each other any time both rendered at once (multiple figures
+     AND an unresolved fallback move). Top-left corner instead - clear of the fallback list,
+     the stack, and every figure/target position on the board. */
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  /* .board-overlay (the parent) sets pointer-events: none on the whole layer so path dots
+     etc. don't block clicks through to the board - this button needs its own opt back in,
+     or it renders but silently can't be tapped (confirmed live - the click never landed). */
+  pointer-events: auto;
+}
+
+.board-overlay__fallback {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.board-overlay__fallback-btn {
+  font-size: 0.8rem;
+  padding: 0.4em 0.8em;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Non-interactive squares along a walked path (see BoardOverlay's path.slice(0,-1)) - solid
+   white fill, rectangular to match the board's own square tiles rather than a circle. Not
+   the tap target itself (see .board-overlay__target above, the small ring at the end of the
+   path) - just marking which squares get walked along the way. */
+.board-overlay__path-dot {
+  position: absolute;
+  border-radius: 3px;
+  border: none;
+  background: var(--ink);
+  pointer-events: none;
+  animation: board-target-pulse 1.4s ease-in-out infinite;
+}
+
+.seven-slider {
+  /* Under the board itself now, stacked above .board-overlay__seven-status/-actions (56px/
+     12px from the bottom) rather than floating in the ring's empty middle - reads as one
+     panel anchored to the bottom edge instead of two separate UI layers competing for the
+     same central spot. */
+  position: absolute;
+  left: 50%;
+  bottom: 160px;
+  transform: translateX(-50%);
+  width: min(94%, 320px);
+  pointer-events: auto;
+}
+
+.board-overlay__seven-status {
+  position: absolute;
+  left: 50%;
+  bottom: 128px;
+  transform: translateX(-50%);
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+  pointer-events: none;
+}
+
+.board-overlay__seven-actions {
+  /* Above the draw/discard stack now (was bottom:12px, same zone the stack itself sits in
+     - see boardLayout.ts's stackCenter - so the two overlapped). */
+  position: absolute;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.board-overlay__seven-reset,
+.board-overlay__seven-confirm {
+  font-size: 0.8rem;
+  padding: 0.4em 0.8em;
+  min-width: 0;
+  min-height: 0;
+}
+
+.board-overlay__seven-confirm {
+  border-color: var(--card-red);
+  color: var(--card-red);
+}
+
+/* Pixel-styled step slider (SevenSplitOverlay) - a real <input type="range"> for keyboard/
+   screen-reader semantics, hidden (opacity, not display:none, so it stays interactive) over
+   a row of decorative blocky notches that mirror its value, matching the board's own square
+   tile language instead of a native rounded thumb-and-track. */
+.pixel-slider__label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--ink-dim);
+  margin-bottom: 4px;
+  text-align: center;
+}
+
+.pixel-slider__body {
+  position: relative;
+  height: 30px;
+}
+
+.pixel-slider__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  /* Without this, mobile browsers can claim a touch-drag starting on this input for their
+     own scroll/pan gesture handling instead of letting the range track it - taps landed
+     (jumping to a value) but a real drag across it didn't, on touch specifically. */
+  touch-action: none;
+}
+
+.pixel-slider__track {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.pixel-slider__notch {
+  flex: 1;
+  border: 2px solid var(--ink);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.pixel-slider__notch--filled {
+  background: var(--card-red);
+}
+
+.pixel-slider:focus-within .pixel-slider__track {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.rank-picker {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: min(90%, 480px);
+  pointer-events: auto;
+}
+
+/* Visual mini card-face buttons for "what should the Joker play as" - see BoardOverlay.tsx.
+   Smaller than a real hand/board card since up to 13 of these can show at once. */
+.rank-picker__card {
+  width: 52px;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+}
+
+.rank-picker__chip {
+  font-size: 0.85rem;
+  padding: 0.4em 0.7em;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.steal-overlay {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+  /* An explicit width (not just max-width) - .steal-overlay__card's percentage-based sizing
+     needs a concrete value to resolve against, not an auto/shrink-to-fit parent. */
+  width: min(94%, 560px);
+}
+
+.steal-overlay__cards {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+/* Same fixed 1/6th-slot sizing as .hand-panel__card - an opponent's face-down hand should
+   read as the same physical card size as every other card on screen, not its own smaller
+   scale, and always lay out in one horizontal row instead of wrapping. Combined selector for
+   the same cascade-order reason as .playing-card.hand-panel__card above, not left to file
+   order. */
+.playing-card.steal-overlay__card {
+  flex: 0 0 auto;
+  width: calc((100% - 5 * 8px) / 6);
+  max-width: 80px;
+  padding: 0;
+}
+
+.steal-overlay__back {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.steal-overlay__cancel {
+  font-size: 0.8rem;
+  padding: 0.4em 0.8em;
+  min-width: 0;
+  min-height: 0;
+}
+
 canvas {
   image-rendering: pixelated;
   image-rendering: crisp-edges;
+}
+
+/* 3D flip reveal - each dealt card flies in showing its back, then rotates to its real face
+   partway through (see DealAnimation.tsx). Two backface-hidden faces stacked in a shared 3D
+   space read as a single card turning over, not a swap/crossfade. */
+.deal-animation__flipper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 260ms ease;
+}
+
+.deal-animation__flipper--revealed {
+  transform: rotateY(180deg);
+}
+
+.deal-animation__face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  background-size: 100% 100%;
+  image-rendering: pixelated;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.5);
+}
+
+.deal-animation__face--front {
+  transform: rotateY(180deg);
+}
+
+.app-background {
+  /* z-index: -1 confirmed (empirically, in this project's own test tooling) to sometimes
+     composite as fully invisible rather than "behind everything" - not worth the risk twice
+     over (see PixelBlast's WebGL version, replaced by this Canvas2D one for a similar
+     reliability reason). z-index: 0 plus .app-content below explicitly stacked above it via
+     the same mechanism (a real positioned stacking order, not a negative escape hatch) is
+     the same visual result through a path that's actually been verified to render. */
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
+}
+
+.app-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.lobby {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 16px 32px;
+}
+
+.lobby__title {
+  font-size: 1.4rem;
+  margin: 8px 0 0;
+}
+
+.lobby__subtitle {
+  margin: 0 0 4px;
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+  text-align: center;
+  max-width: 420px;
+}
+
+.lobby__section {
+  width: 100%;
+  max-width: 480px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lobby__heading {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.lobby__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lobby__hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+}
+
+.lobby__seats {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lobby__seat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lobby__seat-label {
+  font-size: 0.85rem;
+}
+
+.lobby__seat-partner {
+  color: var(--ink-dim);
+}
+
+.lobby__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lobby__swatch {
+  width: var(--target-min-touch);
+  height: var(--target-min-touch);
+  min-width: var(--target-min-touch);
+  min-height: var(--target-min-touch);
+  padding: 0;
+  border: 3px solid var(--bg-deep);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.lobby__swatch[aria-pressed='true'] {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--bg-deep), 0 0 0 4px var(--ink);
+}
+
+.lobby__swatch:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.lobby__start {
+  margin-top: 4px;
+  font-size: 1.1rem;
+}
+
+.win-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  padding: 16px;
+}
+
+.win-screen__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 28px 32px;
+  text-align: center;
+}
+
+.win-screen__heading {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.win-screen__players {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.win-screen__player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.1rem;
+}
+
+.win-screen__swatch {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--bg-deep);
+  border-radius: 3px;
+}
+
+.win-screen__actions {
+  display: flex;
+  gap: 12px;
 }

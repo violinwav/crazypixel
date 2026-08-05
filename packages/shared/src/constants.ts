@@ -1,4 +1,4 @@
-import type { CardRank, PlayerId } from './types';
+import type { CardRank, GameConfig, PlayerId } from './types';
 
 export interface CardDef {
   rank: CardRank;
@@ -34,14 +34,43 @@ export const CARD_DEFS: Record<CardRank, CardDef> = {
 /** Cards dealt per round; cycles back to 6 after 2. */
 export const ROUND_DEAL_SIZES = [6, 5, 4, 3, 2];
 
-export const PLAYER_IDS: PlayerId[] = [0, 1, 2, 3];
-export const PARTNER_OF: Record<PlayerId, PlayerId> = { 0: 2, 1: 3, 2: 0, 3: 1 };
-export const TEAM_OF: Record<PlayerId, 0 | 1> = { 0: 0, 1: 1, 2: 0, 3: 1 };
-
-export const ARM_LENGTH = 16;
-export const TRACK_LENGTH = ARM_LENGTH * 4; // 64
 export const HOME_STRETCH_LENGTH = 4;
 export const KENNEL_SIZE = 4;
 
-/** Global track index each player's marbles enter the board on. */
-export const START_INDEX: Record<PlayerId, number> = { 0: 0, 1: 16, 2: 32, 3: 48 };
+/** Squares per player's arm of the track - fixed regardless of player count, so the board
+ * itself grows (more total squares) rather than players getting cramped onto a fixed ring.
+ * A 4-player game is the same 64-square track it always was; 6 players get 96. */
+export const ARM_LENGTH = 16;
+
+// --- Config-aware helpers -------------------------------------------------
+// Everything below replaces what used to be fixed PLAYER_IDS/PARTNER_OF/TEAM_OF/
+// START_INDEX/TRACK_LENGTH constants, now that player count and team/FFA mode are runtime
+// choices (see GameConfig) instead of a fixed 4-player, 2-team assumption.
+
+export function trackLengthFor(config: GameConfig): number {
+  return ARM_LENGTH * config.playerCount;
+}
+
+export function activePlayerIds(config: GameConfig): PlayerId[] {
+  return Array.from({ length: config.playerCount }, (_, i) => i as PlayerId);
+}
+
+/** Each player's arm starts right after the previous one - player p's start is always at
+ * global track index p * ARM_LENGTH, evenly spaced by construction. */
+export function startIndexFor(config: GameConfig, player: PlayerId): number {
+  return player * ARM_LENGTH;
+}
+
+/** The seat directly opposite in 'teams' mode (e.g. 4P: 0<->2, 1<->3; 6P: 0<->3, 1<->4,
+ * 2<->5). No partner in 'ffa' - every player is on their own. */
+export function partnerOf(config: GameConfig, player: PlayerId): PlayerId | null {
+  if (config.mode !== 'teams') return null;
+  return ((player + config.playerCount / 2) % config.playerCount) as PlayerId;
+}
+
+/** Every other active player who isn't this player's partner (in 'ffa', that's everyone
+ * else, since there are no partners). Used for the custom-2's force-draw target list. */
+export function opponentsOf(config: GameConfig, player: PlayerId): PlayerId[] {
+  const partner = partnerOf(config, player);
+  return activePlayerIds(config).filter((p) => p !== player && p !== partner);
+}

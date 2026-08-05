@@ -1,29 +1,17 @@
-import { useEffect, useRef } from 'react';
-import type Phaser from 'phaser';
-import { createPhaserGame } from './game/PhaserGame';
+import { useState } from 'react';
+import { Lobby } from './Lobby';
+import type { GameSetup } from './Lobby';
+import { GameView } from './GameView';
+import { PixelDither } from './PixelDither';
 
 export default function App() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const gameRef = useRef<Phaser.Game | null>(null);
-
-  useEffect(() => {
-    if (!containerRef.current || gameRef.current) return;
-    gameRef.current = createPhaserGame(containerRef.current);
-    return () => {
-      gameRef.current?.destroy(true);
-      gameRef.current = null;
-    };
-  }, []);
-
+  const [setup, setSetup] = useState<GameSetup | null>(null);
   return (
-    <main style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-      <h1 className="visually-hidden">CrazyPixel</h1>
-      <div
-        ref={containerRef}
-        role="img"
-        aria-label="Game board placeholder preview: board tiles, player marbles, and sample playing cards. Static, not yet interactive."
-        style={{ flex: 1, minHeight: 0 }}
-      />
-    </main>
+    <>
+      <PixelDither className="app-background" />
+      <div className="app-content">
+        {setup ? <GameView setup={setup} /> : <Lobby onStart={setSetup} />}
+      </div>
+    </>
   );
 }
