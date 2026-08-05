@@ -1,0 +1,109 @@
+:root {
+  --bg-deep: #0d0a1f;
+  --bg-panel: #1a1435;
+  --bg-raised: #241c4a;
+  --ink: #f4f1ff;
+  --ink-dim: #b7aee0;
+  --accent: #ffd23f;
+
+  --player-red: #ff5470;
+  --player-blue: #3fb0ff;
+  --player-yellow: #ffe66d;
+  --player-green: #38e58f;
+
+  --focus-ring: var(--accent);
+  --focus-ring-buffer: var(--bg-deep);
+
+  --target-min-touch: 44px;
+
+  --cp-font-display: 'Press Start 2P', monospace;
+  --cp-font-body: 'Pixelify Sans', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg-deep);
+  color: var(--ink);
+  font-family: var(--cp-font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Reserve the display font for short strings (titles, HUD labels) - it's unreadable at
+   body-text sizes and burns through line-length fast. */
+.cp-title {
+  font-family: var(--cp-font-display);
+  letter-spacing: 1px;
+  text-shadow: 3px 3px 0 var(--bg-deep);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.cp-panel,
+.cp-button {
+  /* bg-panel/bg-raised/bg-deep sit at ~1:1 contrast to each other - the border is the
+     boundary between surfaces, not the fill color. Don't drop this. */
+  border: 2px solid var(--ink-dim);
+}
+
+.cp-panel {
+  background: var(--bg-panel);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.4);
+}
+
+.cp-button {
+  font-family: var(--cp-font-body);
+  font-weight: 700;
+  font-size: 1rem;
+  min-width: var(--target-min-touch);
+  min-height: var(--target-min-touch);
+  background: var(--accent);
+  color: var(--bg-deep);
+  border-color: var(--bg-deep);
+  box-shadow: 3px 3px 0 var(--bg-deep);
+  padding: 0.6em 1.2em;
+  cursor: pointer;
+}
+
+.cp-button:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--bg-deep);
+}
+
+.cp-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--focus-ring-buffer);
+}
+
+.cp-button:focus:not(:focus-visible) {
+  outline: none;
+}
+
+canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}

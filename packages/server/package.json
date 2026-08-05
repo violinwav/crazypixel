@@ -1,0 +1,23 @@
+{
+  "name": "@crazypixel/server",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@colyseus/schema": "^2.0.35",
+    "@colyseus/ws-transport": "^0.15.3",
+    "colyseus": "^0.15.39",
+    "@crazypixel/shared": "*",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.15"
+  }
+}
