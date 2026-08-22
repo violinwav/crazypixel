@@ -7,7 +7,8 @@ Guidance for Claude Code (or any agent) working in this repo.
 CrazyPixel — a pixel-art web clone of Brändi Dog (Swiss marble-race card game) with house
 rules layered on top (split 7s, wild joker, blind steal, etc. — full list in `README.md`).
 Monorepo: `packages/shared` (rules engine) → `packages/client` (React + Phaser UI) →
-`packages/server` (Colyseus skeleton, not wired up yet).
+`packages/server` (Colyseus, runs real networked multiplayer). Local hotseat play and
+online multiplayer (host/join by room code) both work today - see Architecture below.
 
 ## Architecture
 
@@ -25,8 +26,27 @@ Monorepo: `packages/shared` (rules engine) → `packages/client` (React + Phaser
     screen-reader-operable element, not just a canvas pixel.
   Both read the same `computeBoardGeometry(width, height, trackLength)` so a track square's
   Phaser position and its DOM hit-target always agree.
-- **`packages/server`** boots (Express + Colyseus) but doesn't route real games yet. Treat it
-  as a stub unless the user explicitly asks to wire up online play.
+  - **Local vs. online play share one rendering component**, `GameBoard.tsx`, fed either by
+    `useGameState` (local hotseat, mutates a local `GameState` clone per turn) or
+    `useOnlineGameState` (online, sends `play`/`passHand` messages to the server and
+    re-renders off whatever `GameState` comes back - never mutates locally). `GameBoard`
+    takes a `mySeat` prop and only renders the hand panel and board overlay when
+    `mySeat === state.currentPlayer` - correct by construction for local hotseat (`mySeat`
+    is always `state.currentPlayer` there) and how online play hides other players' hands
+    (you see your own hand only on your turn; a "Waiting for Player N" message shows the
+    rest of the time). The marble-path walk animation (`lastPlanRef`) is always empty
+    online - the client only sees before/after `GameState` snapshots for other players'
+    moves, not the `Move` itself, so there's nothing to build a real path animation from.
+- **`packages/server`** runs real networked multiplayer via a single Colyseus room,
+  `GameRoom.ts`. It's server-authoritative: it runs the unmodified `@crazypixel/shared`
+  engine and only accepts a client's `play`/`passHand` message if `getLegalMoves` actually
+  offers that move to that seat on its turn. Room state syncs as one `stateJson` field
+  (`JSON.stringify(GameState)`), not per-field `@colyseus/schema` mirroring - see
+  `docs/superpowers/specs/2026-08-22-online-multiplayer-lobbies-design.md` for why. The
+  join "code" players share is just Colyseus's own `room.id`; there's no separate
+  matchmaking/room-list registry. **Not implemented:** reconnect after a disconnect (a
+  dropped seat just freezes mid-game), rematch/"Play Again" in online mode, spectators, and
+  any persistence (rooms are in-memory, gone when empty or the process restarts).
 
 ## Non-obvious things that will bite you
 
@@ -57,14 +77,18 @@ Monorepo: `packages/shared` (rules engine) → `packages/client` (React + Phaser
   around the track; landing exactly on your own base square by going backward earns the
   *right* to enter home on a later, separate forward move — `planMovement` doesn't special-
   case this at all, it falls out of the ordinary forward-overflow-into-home branch for free.
+- **`@colyseus/schema`'s `@type` decorators need `experimentalDecorators: true`.** Set in
+  `packages/server/tsconfig.json` specifically for `GameRoom.ts`'s `RoomState` class — the
+  stub room never used decorators, so this wasn't needed before. Don't remove it while any
+  Schema subclass exists there.
 
 ## Conventions
 
 - No comments that restate what code does — only ones explaining *why*, especially for the
   gotchas above. Match that style in new code.
 - Don't add a dependency (npm package, UI library) without checking it's actually needed —
-  this project is deliberately dependency-light (Phaser + React + Colyseus, nothing else on
-  the client).
+  this project is deliberately dependency-light (Phaser + React + `colyseus.js`, nothing
+  else on the client).
 - Sprites are procedurally generated (`packages/client/scripts/generate-sprites.py`, Pillow),
   never hand-drawn image files or AI-generated art. Palette lives in three places kept in
   sync by hand: `styles/theme.css` (CSS strings), `game/theme.ts` (hex, for Phaser), and the
