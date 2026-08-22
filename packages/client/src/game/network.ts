@@ -10,6 +10,13 @@ const CLIENT_DEV_PORT = '5173'; // vite.config.ts's server.port
 const SERVER_PORT = '2567'; // packages/server's default PORT
 
 function resolveServerUrl(): string {
+  // Production deploys (e.g. client on Vercel, server on Railway/Render/Fly) put the two on
+  // completely unrelated domains - there's no hostname trick that can derive one from the
+  // other, so an explicit build-time override wins when set. Vite only exposes env vars
+  // prefixed VITE_ to client code; set VITE_SERVER_URL to the server's wss:// URL.
+  const explicitUrl = import.meta.env.VITE_SERVER_URL as string | undefined;
+  if (explicitUrl) return explicitUrl;
+
   const { protocol, hostname } = window.location;
   const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
   // Forwarded-port tunnels (VS Code Ports panel, Codespaces, devtunnels) encode the
