@@ -7,6 +7,7 @@ import type { PhaserBridge } from './game/PhaserGame';
 import type { TurnAnimation } from './game/animationPlan';
 import { computeBoardGeometry, discardPileCenter, drawPileCenter } from './game/boardLayout';
 import { HandPanel } from './HandPanel';
+import type { StolenCardGhost } from './HandPanel';
 import { HandBackground } from './HandBackground';
 import { BoardOverlay } from './BoardOverlay';
 import { BoardStatus } from './BoardStatus';
@@ -18,6 +19,17 @@ import type { FlightPlan } from './FlyingCard';
 import { DealAnimation } from './DealAnimation';
 import type { DealPlan } from './DealAnimation';
 import { WinScreen } from './WinScreen';
+
+// How long a stolen card sits fully visible/highlighted (pulsing) in the victim's hand
+// before fading - matches .playing-card--vanishing's own transition duration below.
+const STOLEN_HOLD_MS = 1000;
+// One committed frame between "stop pulsing" and "start fading" - an active CSS animation
+// handing straight to a transition on the same property in one class swap snaps instead of
+// interpolating (confirmed live, see theme.css's .playing-card--threatened-still comment).
+// 20ms matches this codebase's own established value for "let the browser paint the before
+// state first" (see FlyingCard.tsx).
+const STOLEN_SETTLE_MS = 20;
+const STOLEN_FADE_MS = 320;
 
 interface Props {
   state: GameState;
@@ -40,13 +52,19 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [flight, setFlight] = useState<FlightPlan | null>(null);
-  const [stolenFlight, setStolenFlight] = useState<FlightPlan | null>(null);
+  const [stolenGhost, setStolenGhost] = useState<StolenCardGhost | null>(null);
+  const [stolenAnnouncement, setStolenAnnouncement] = useState('');
   const [dealPlan, setDealPlan] = useState<DealPlan | null>(null);
   const dealtRoundRef = useRef<number | null>(null);
   // Previous state, kept purely to detect "one of MY cards just vanished because someone
   // ELSE'S move took it" (a steal) - see the effect below. Not used for anything else;
   // GameBoard doesn't otherwise need history.
   const prevStateRef = useRef<GameState | null>(null);
+  // Ghost's hold/fade timers, kept in a ref (not the effect's own cleanup) specifically so
+  // an unrelated later state change - my own turn coming around, say - doesn't cancel a
+  // steal reveal that's still mid-hold. Only a *newer* steal should ever pre-empt one
+  // that's still showing.
+  const stolenTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const isMyTurn = mySeat === state.currentPlayer;
 
@@ -93,7 +111,13 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
     const deckPoint = drawPileCenter(geo);
     const handRect = handPanelRef.current.getBoundingClientRect();
     setDealPlan({
-      cards: state.hands[state.currentPlayer],
+      // mySeat, not state.currentPlayer - they're always equal in local hotseat, which is
+      // why this bug was invisible there, but online state.currentPlayer is whoever's turn
+      // it is, not the viewer. Using it here meant every deal animated *that* player's real
+      // cards into your own hand-panel slot on your screen - both a mismatch (what animated
+      // in didn't match what HandPanel then actually showed) and a real leak (you'd
+      // genuinely see another player's hand face-up for the length of the animation).
+      cards: state.hands[mySeat],
       from: { x: containerRect.left + deckPoint.x, y: containerRect.top + deckPoint.y },
       to: { x: handRect.left, y: handRect.top + handRect.height / 2, width: handRect.width },
     });
@@ -109,7 +133,11 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
   // screen reader user that the board just became (or stopped being) interactive.
   const turnAnnouncement = isMyTurn ? "It's your turn." : `Waiting for Player ${state.currentPlayer + 1}.`;
 
-  const selectedCard = state.hands[state.currentPlayer].find((c) => c.id === selectedCardId) ?? null;
+  // mySeat, not state.currentPlayer - only ever meaningfully non-null while isMyTurn (so the
+  // two happen to be equal today, same as HandBackground's colorHex below), but mySeat is
+  // what this actually means ("the card I've selected") and matches every other hand
+  // lookup in this file after the deal-plan bug above.
+  const selectedCard = state.hands[mySeat].find((c) => c.id === selectedCardId) ?? null;
 
   const handlePlay = (player: PlayerId, move: Move) => {
     const cardEl = document.querySelector<HTMLElement>(`[data-card-id="${move.card.id}"]`);
@@ -136,8 +164,10 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
   // prev.currentPlayer !== mySeat is what distinguishes this from my own ordinary play,
   // which already gets its fly-to-discard animation from handlePlay above. Deliberately the
   // *only* signal either side gets that a steal happened - no advance warning, no preview
-  // while the thief is still picking, both card placement and this reverse animation fire
-  // together only once the real move has actually landed.
+  // while the thief is still picking, this only fires once the real move has actually
+  // landed. Holds the card in place, highlighted, rather than flying it anywhere - per
+  // feedback, a flight animation read as too abrupt to actually register which card was
+  // taken; sitting still and red for a beat reads clearly, then a smooth fade hands it off.
   useEffect(() => {
     const prev = prevStateRef.current;
     prevStateRef.current = state;
@@ -145,26 +175,27 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
     const prevHand = prev.hands[mySeat];
     const nextIds = new Set(state.hands[mySeat].map((c) => c.id));
     if (state.hands[mySeat].length >= prevHand.length) return;
-    const stolenCard = prevHand.find((c) => !nextIds.has(c.id));
-    if (!stolenCard) return;
-    const containerEl = containerRef.current;
-    const handEl = handPanelRef.current;
-    if (!containerEl || !handEl || containerSize.width === 0) return;
-    const handRect = handEl.getBoundingClientRect();
-    const containerRect = containerEl.getBoundingClientRect();
-    const geo = computeBoardGeometry(
-      containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
+    const stolenIndex = prevHand.findIndex((c) => !nextIds.has(c.id));
+    if (stolenIndex === -1) return;
+    const stolenCard = prevHand[stolenIndex];
+
+    stolenTimersRef.current.forEach(clearTimeout);
+    setStolenGhost({ card: stolenCard, index: stolenIndex, phase: 'held' });
+    setStolenAnnouncement(
+      `Your ${stolenCard.rank}${stolenCard.suit ? ` of ${stolenCard.suit}` : ''} was taken by Player ${prev.currentPlayer + 1}.`,
     );
-    // The stolen card's own DOM position is long gone by the time this runs (state already
-    // updated) - the hand panel's own center stands in as "somewhere in my hand" instead,
-    // flying out toward the board's center ("taken away"), a reverse of the normal
-    // card-to-discard flight simultaneous with the thief's own animation on their screen.
-    setStolenFlight({
-      card: stolenCard,
-      from: { x: handRect.left + handRect.width / 2 - 40, y: handRect.top, width: 80, height: handRect.height },
-      to: { x: containerRect.left + geo.center.x, y: containerRect.top + geo.center.y },
-    });
-  }, [state, mySeat, containerSize]);
+    const settleTimer = setTimeout(() => {
+      setStolenGhost((g) => (g ? { ...g, phase: 'settled' } : g));
+    }, STOLEN_HOLD_MS);
+    const vanishTimer = setTimeout(() => {
+      setStolenGhost((g) => (g ? { ...g, phase: 'vanishing' } : g));
+    }, STOLEN_HOLD_MS + STOLEN_SETTLE_MS);
+    const clearTimer = setTimeout(
+      () => setStolenGhost(null),
+      STOLEN_HOLD_MS + STOLEN_SETTLE_MS + STOLEN_FADE_MS,
+    );
+    stolenTimersRef.current = [settleTimer, vanishTimer, clearTimer];
+  }, [state, mySeat]);
 
   return (
     <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -184,10 +215,13 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
       {/* Board state changes are driven from here, not narrated by the canvas itself - the
           canvas has no way to expose that to assistive tech, this text does. */}
       <p aria-live="polite" className="visually-hidden">
-        {lastMoveAnnouncement} {turnAnnouncement}
+        {lastMoveAnnouncement} {turnAnnouncement} {stolenAnnouncement}
       </p>
       <div ref={handPanelRef} className="hand-panel-slot" style={{ opacity: dealPlan ? 0 : 1 }}>
-        <HandBackground active={isMyTurn} colorHex={hexToCss(PALETTE.players[colors[state.currentPlayer]])} />
+        {/* mySeat, not state.currentPlayer - only visible while isMyTurn (so equal today,
+            same reasoning as selectedCard above), but this is "my color," not "whoever's
+            turn's color." */}
+        <HandBackground active={isMyTurn} colorHex={hexToCss(PALETTE.players[colors[mySeat]])} />
         {turnDeadline !== undefined && <TurnTimerBar deadline={turnDeadline} />}
         <HandPanel
           state={state}
@@ -195,10 +229,10 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
           interactive={isMyTurn}
           selectedCardId={selectedCardId}
           onSelectCard={setSelectedCardId}
+          ghost={stolenGhost}
         />
       </div>
       {flight && <FlyingCard plan={flight} onDone={() => setFlight(null)} />}
-      {stolenFlight && <FlyingCard plan={stolenFlight} onDone={() => setStolenFlight(null)} />}
       {dealPlan && <DealAnimation plan={dealPlan} onDone={() => setDealPlan(null)} />}
       <WinScreen state={state} colors={colors} onPlayAgain={restart} />
     </main>

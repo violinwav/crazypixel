@@ -6,7 +6,7 @@ import {
 } from '@crazypixel/shared';
 import type { GameConfig, GameMode, GameState, Move, PlayerId } from '@crazypixel/shared';
 
-const TURN_MS = 20_000;
+const TURN_MS = 30_000;
 
 /**
  * Networked room state kept deliberately thin - the actual GameState (marbles/hands/piles/
@@ -44,7 +44,7 @@ interface PlayMessage {
  * game or move out of turn. `room.id` (Colyseus's own short random ID) doubles as the
  * "room code" players share to join - no separate code registry.
  *
- * Every turn gets a 20s clock (TURN_MS) - see scheduleTurnTimeout/autoPlayTurn. This also
+ * Every turn gets a 30s clock (TURN_MS) - see scheduleTurnTimeout/autoPlayTurn. This also
  * means a mid-game disconnect (see onLeave) doesn't stall the game forever: the frozen
  * seat's turn still times out and auto-plays like anyone else's.
  */

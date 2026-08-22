@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-const TURN_MS = 20000;
+const TURN_MS = 30000;
 // Announced once each, not continuously - a screen reader user needs to know time is
 // running out (this can cost you your intended move to auto-play), but a running "19...
 // 18... 17..." readout would drown out everything else on the page.

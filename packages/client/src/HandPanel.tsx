@@ -1,9 +1,21 @@
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { getLegalMoves } from '@crazypixel/shared';
-import type { GameState, PlayerId } from '@crazypixel/shared';
+import type { Card, GameState, PlayerId } from '@crazypixel/shared';
 import { CARD_FACE_SPRITE } from './game/cardArt';
 import { CardRankIndices } from './CardRankIndices';
+
+export interface StolenCardGhost {
+  card: Card;
+  /** Where it sat in the hand at the moment it was taken - reinserted at this index so
+   * the other cards don't reflow until the ghost actually leaves (see GameBoard.tsx). */
+  index: number;
+  /** 'held' (pulsing red) -> 'settled' (same look, animation stopped, one committed frame)
+   * -> 'vanishing' (fading out). Three phases, not two - an active CSS animation handing
+   * straight to a transition on the same property doesn't interpolate, it snaps (confirmed
+   * live) - see theme.css's .playing-card--threatened-still comment. */
+  phase: 'held' | 'settled' | 'vanishing';
+}
 
 // How long a freshly-revealed hand sits fully solid before illegal cards dim - long enough
 // to clear .hand-panel-slot's own 250ms crossfade (see theme.css), so the dim-down reads as
@@ -26,6 +38,9 @@ interface Props {
   interactive: boolean;
   selectedCardId: string | null;
   onSelectCard: (cardId: string | null) => void;
+  /** A card an opponent just took, shown red-highlighted in its old spot for a beat before
+   * fading - see GameBoard.tsx's stolenGhost. undefined/null outside that moment. */
+  ghost?: StolenCardGhost | null;
 }
 
 // Move selection itself now lives in BoardOverlay (highlighted board positions, not a text
@@ -37,7 +52,7 @@ interface Props {
 // background-image so the display-font rank text can still sit crisply on top of it. Turn
 // label and the no-legal-moves fallback both live on the board now (see BoardStatus.tsx),
 // not boxed inside this panel.
-export function HandPanel({ state, player, interactive, selectedCardId, onSelectCard }: Props) {
+export function HandPanel({ state, player, interactive, selectedCardId, onSelectCard, ghost }: Props) {
   const hand = state.hands[player];
 
   // Re-arms on every turn switch (not just the initial deal) - a plain hand reveal with no
@@ -51,10 +66,33 @@ export function HandPanel({ state, player, interactive, selectedCardId, onSelect
     return () => clearTimeout(timer);
   }, [player, interactive]);
 
+  // The stolen card is already gone from `hand` by the time a ghost exists (state updated
+  // before GameBoard could react) - reinserted here, at its old index, purely for display,
+  // so the real cards on either side of it don't reflow until it actually finishes fading.
+  const displayCards: { card: Card; isGhost: boolean }[] = hand.map((card) => ({ card, isGhost: false }));
+  if (ghost) {
+    displayCards.splice(Math.min(ghost.index, displayCards.length), 0, { card: ghost.card, isGhost: true });
+  }
+
   return (
     <section className="hand-panel">
       <div role="group" aria-label="Your hand" className="hand-panel__cards">
-        {hand.map((card) => {
+        {displayCards.map(({ card, isGhost }) => {
+          if (isGhost) {
+            const phaseClass = ghost?.phase === 'vanishing' ? 'playing-card--vanishing'
+              : ghost?.phase === 'settled' ? 'playing-card--threatened-still'
+                : 'playing-card--threatened';
+            return (
+              <div
+                key={card.id}
+                className={`playing-card hand-panel__card ${phaseClass}`}
+                style={{ '--card-face': `url(${CARD_FACE_SPRITE[card.rank]})` } as CSSProperties}
+                aria-hidden="true"
+              >
+                <CardRankIndices rank={card.rank} />
+              </div>
+            );
+          }
           // getLegalMoves isn't itself turn-aware (it'll happily compute moves for a player
           // who isn't state.currentPlayer - see StealCardOverlay previewing an opponent's
           // hand) - `interactive` is what actually reflects whether it's this hand's turn.

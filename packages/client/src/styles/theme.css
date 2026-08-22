@@ -293,6 +293,37 @@ body {
   opacity: 0.35;
 }
 
+/* A card an opponent just took (see HandPanel.tsx's ghost) - held here, fully visible and
+   pulsing, for a beat before fading, so "which card was taken" actually registers instead
+   of the card just disappearing. Three CSS states, not two (see GameBoard.tsx's
+   StolenCardGhost.phase 'held'/'settled'/'vanishing') - an active CSS *animation* handing
+   straight to a *transition* on the same property (opacity) in one class swap doesn't
+   interpolate, it snaps to the transition's end value instantly (confirmed with a
+   throwaway Playwright script sampling computed opacity mid-transition - looked fine
+   reading the CSS, was not fine live). --threatened-still is the same look with the
+   animation already stopped, held for one committed frame so --vanishing's transition has
+   a real "before" value to fade from. */
+.playing-card--threatened {
+  outline: 3px solid var(--player-red);
+  outline-offset: 3px;
+  animation: board-figure-pulse 1s ease-in-out infinite;
+}
+
+.playing-card--threatened-still {
+  outline: 3px solid var(--player-red);
+  outline-offset: 3px;
+}
+
+/* The ghost's exit, once its hold time is up - a longer, matched opacity+transform pair
+   overriding .playing-card's own base transition (0.12s, tuned for the selection lift, too
+   fast to read as a deliberate fade here) so it dissolves smoothly instead of snapping out
+   the instant React removes it. */
+.playing-card--vanishing {
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 320ms ease, transform 320ms ease;
+}
+
 .playing-card:focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
