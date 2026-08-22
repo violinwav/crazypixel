@@ -4,7 +4,7 @@ import { PALETTE } from './game/theme';
 interface Props {
   state: GameState;
   colors: number[];
-  onPlayAgain: () => void;
+  onPlayAgain?: () => void;
 }
 
 function colorHex(colorIndex: number): string {
@@ -39,9 +39,11 @@ export function WinScreen({ state, colors, onPlayAgain }: Props) {
           ))}
         </div>
         <div className="win-screen__actions">
-          <button type="button" className="cp-button" onClick={onPlayAgain}>
-            Play Again
-          </button>
+          {onPlayAgain && (
+            <button type="button" className="cp-button" onClick={onPlayAgain}>
+              Play Again
+            </button>
+          )}
           <button type="button" className="cp-button" onClick={backToLobby}>
             Change Settings
           </button>

@@ -4,6 +4,8 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "strict": true,
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
     "outDir": "dist",
     "skipLibCheck": true,
     "esModuleInterop": true

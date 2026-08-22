@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import type { GameState } from '@crazypixel/shared';
+import type { GameState, PlayerId } from '@crazypixel/shared';
 import { PALETTE } from './theme';
 import { TableScene } from './scenes/TableScene';
 import { EMPTY_TURN_ANIMATION } from './animationPlan';
@@ -9,6 +9,7 @@ export interface PhaserBridge {
   game: Phaser.Game;
   setGameState: (state: GameState, plan?: TurnAnimation) => void;
   setColorAssignment: (colors: number[]) => void;
+  setViewerSeat: (seat: PlayerId) => void;
 }
 
 const SIZE_POLL_INTERVAL_MS = 50;
@@ -74,10 +75,13 @@ export function createPhaserGame(parent: HTMLElement): PhaserBridge {
   let latestState: GameState | null = null;
   let latestPlan: TurnAnimation = EMPTY_TURN_ANIMATION;
   let latestColors: number[] | null = null;
+  let latestViewerSeat: PlayerId | null = null;
   const pushState = () => {
     const scene = game.scene.getScene('TableScene') as TableScene | null;
     if (!scene) return;
     if (latestColors) scene.setColorAssignment(latestColors);
+    // Before setGameState, which is what actually triggers the re-layout that reads it.
+    if (latestViewerSeat !== null) scene.setViewerSeat(latestViewerSeat);
     if (latestState) scene.setGameState(latestState, latestPlan);
   };
   game.events.once(Phaser.Core.Events.READY, pushState);
@@ -93,5 +97,10 @@ export function createPhaserGame(parent: HTMLElement): PhaserBridge {
     pushState();
   };
 
-  return { game, setGameState, setColorAssignment };
+  const setViewerSeat = (seat: PlayerId) => {
+    latestViewerSeat = seat;
+    pushState();
+  };
+
+  return { game, setGameState, setColorAssignment, setViewerSeat };
 }

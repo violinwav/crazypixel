@@ -35,6 +35,13 @@ interface Props {
   selectedCard: Card | null;
   containerSize: { width: number; height: number };
   onPlay: (player: PlayerId, move: Move) => void;
+  mySeat: PlayerId;
+  /** Fired the moment the player commits to stealing from a specific opponent (tapping their
+   * kennel/"red circle"), before they've picked which hand position - see FigureThenMoves'
+   * handleFigureClick. Lets GameBoard start the card's fly-to-discard animation right there
+   * instead of waiting for StealCardOverlay's own reveal flight to finish, per feedback that
+   * the card should visually "lay down" at the moment of committing to steal, not after. */
+  onCardLeavingHand: (card: Card) => void;
 }
 
 // Sits absolutely positioned over the Phaser canvas. Selecting a card highlights real board
@@ -45,7 +52,7 @@ interface Props {
 // game/figureTargets.ts for the two-phase "pick the piece, then pick where it goes" split,
 // game/moveTargets.ts for how a resolved move maps to a board position, and
 // SevenSplitOverlay for the 7's dedicated multi-marble allocator.
-export function BoardOverlay({ state, selectedCard, containerSize, onPlay }: Props) {
+export function BoardOverlay({ state, selectedCard, containerSize, onPlay, mySeat, onCardLeavingHand }: Props) {
   const [jokerRank, setJokerRank] = useState<CardRank | 'START' | null>(null);
   // Without this, jokerRank survives past the card that produced it - deselecting the Joker
   // (or any card change at all, including a different player's turn picking a Joker again)
@@ -56,7 +63,7 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay }: Pro
   if (!selectedCard || containerSize.width === 0) return null;
 
   const player = state.currentPlayer;
-  const geo = computeBoardGeometry(containerSize.width, containerSize.height, trackLengthFor(state.config));
+  const geo = computeBoardGeometry(containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount);
   const legalMoves = getLegalMoves(state, player, selectedCard);
 
   if (selectedCard.rank === 'JOKER') {
@@ -103,10 +110,30 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay }: Pro
       ? legalMoves.filter((m) => m.kind === 'startMarble')
       : wildMoves.filter((m) => m.asRank === jokerRank);
 
-    return <MoveRouter key={jokerRank} state={state} moves={movesForRank} geo={geo} player={player} onPlay={onPlay} />;
+    return (
+      <MoveRouter
+        key={jokerRank}
+        state={state}
+        moves={movesForRank}
+        geo={geo}
+        player={player}
+        onPlay={onPlay}
+        onCardLeavingHand={onCardLeavingHand}
+      />
+    );
   }
 
-  return <MoveRouter key={selectedCard.id} state={state} moves={legalMoves} geo={geo} player={player} onPlay={onPlay} />;
+  return (
+    <MoveRouter
+      key={selectedCard.id}
+      state={state}
+      moves={legalMoves}
+      geo={geo}
+      player={player}
+      onPlay={onPlay}
+      onCardLeavingHand={onCardLeavingHand}
+    />
+  );
 }
 
 /** Splits off anything that's a splitSeven at heart (a real 7, or an 8/Joker-as-8 copying a
@@ -114,12 +141,14 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay }: Pro
  * everything else through the normal figure-then-target flow. Both can legally coexist on
  * one card (an 8 offers "copy the 7" alongside its own plain move-8), so both render at
  * once rather than one replacing the other. */
-function MoveRouter({ state, moves, geo, player, onPlay }: FigureThenMovesProps) {
+function MoveRouter({ state, moves, geo, player, onPlay, onCardLeavingHand }: FigureThenMovesProps) {
   const splitMoves = moves.filter(isSevenSplitMove);
   const otherMoves = moves.filter((m) => !isSevenSplitMove(m));
 
   if (splitMoves.length === 0) {
-    return <FigureThenMoves state={state} moves={moves} geo={geo} player={player} onPlay={onPlay} />;
+    return (
+      <FigureThenMoves state={state} moves={moves} geo={geo} player={player} onPlay={onPlay} onCardLeavingHand={onCardLeavingHand} />
+    );
   }
 
   return (
@@ -128,7 +157,7 @@ function MoveRouter({ state, moves, geo, player, onPlay }: FigureThenMovesProps)
         <SevenSplitOverlay state={state} moves={splitMoves} geo={geo} onPlay={onPlay} />
       </div>
       {otherMoves.length > 0 && (
-        <FigureThenMoves state={state} moves={otherMoves} geo={geo} player={player} onPlay={onPlay} />
+        <FigureThenMoves state={state} moves={otherMoves} geo={geo} player={player} onPlay={onPlay} onCardLeavingHand={onCardLeavingHand} />
       )}
     </>
   );
@@ -140,13 +169,14 @@ interface FigureThenMovesProps {
   geo: ReturnType<typeof computeBoardGeometry>;
   player: PlayerId;
   onPlay: Props['onPlay'];
+  onCardLeavingHand: Props['onCardLeavingHand'];
 }
 
 /** Two-phase move picker: highlight the pieces that can act (a marble, your base, an
  * opponent's hand for a steal), then - once one is picked - highlight where it can go. The
  * `key` prop callers pass (selectedCard.id / jokerRank) forces a fresh instance whenever the
  * underlying move set changes, so this never carries a stale figure selection across cards. */
-function FigureThenMoves({ state, moves, geo, player, onPlay }: FigureThenMovesProps) {
+function FigureThenMoves({ state, moves, geo, player, onPlay, onCardLeavingHand }: FigureThenMovesProps) {
   const [figureKey, setFigureKey] = useState<string | null>(null);
   const { figures, unresolved } = groupMovesByFigure(state, moves, geo);
   // A single eligible piece is no real choice - skip straight to its moves rather than
@@ -190,6 +220,12 @@ function FigureThenMoves({ state, moves, geo, player, onPlay }: FigureThenMovesP
     if (f.key === 'start' && f.moves.length === 1) {
       onPlay(player, f.moves[0]);
       return;
+    }
+    // Committing to steal from this opponent is itself the "lay the card down" moment, not
+    // whichever hand position gets tapped next (StealCardOverlay) - see onCardLeavingHand's
+    // own comment on Props.
+    if (f.key.startsWith('opponent:')) {
+      onCardLeavingHand(f.moves[0].card);
     }
     setFigureKey(f.key);
   };

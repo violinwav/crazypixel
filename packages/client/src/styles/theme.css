@@ -139,6 +139,9 @@ body {
      of that 250ms - confirmed live, read as the hand disappearing for a beat). Now that the
      deal animation's cards land at the exact same position/size the real hand renders at
      (see DealAnimation.tsx), a hard cut lines up seamlessly - nothing to crossfade. */
+  /* Positioning context for .turn-label/.turn-timer below - both overlay the top edge of
+     this slot ("on top of the cards") rather than sitting in normal flow above it. */
+  position: relative;
 }
 
 .hand-panel__cards {
@@ -255,6 +258,32 @@ body {
   pointer-events: none;
 }
 
+/* Card-count badge over each opponent's kennel (see OpponentHandCounts.tsx) - always
+   visible, not gated by whose turn it is. Non-interactive (no pointer-events needed), but
+   deliberately not aria-hidden - the count is real information, just not a control. */
+.opponent-hand-counts {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.opponent-hand-counts__badge {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--bg-deep);
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  font-family: var(--cp-font-display);
+  font-size: 9px;
+}
+
 /* Pass-hand fallback anchors to the draw/discard stack (see BoardStatus.tsx) - the turn
    label itself lives outside the board now, right above the hand panel (see .turn-label). */
 .board-status__pass {
@@ -270,23 +299,66 @@ body {
   z-index: 10;
 }
 
-/* Small, plain strip right above the hand panel (see TurnLabel.tsx) - not stacked on the
-   board over the ring's own kennel markers anymore. Crossfades on change instead of
-   snapping. */
+/* Overlays the top edge of the hand panel (see .hand-panel-slot's position:relative) rather
+   than sitting in normal flow above it - "more on top of the cards" per feedback. Needs its
+   own outline (not just --ink-dim) since it now sits over unpredictable card art instead of
+   the plain PixelDither background. Crossfades on change instead of snapping. */
 .turn-label {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  pointer-events: none;
   margin: 0;
-  padding: 4px 0;
+  padding: 0;
   text-align: center;
   font-family: var(--cp-font-display);
   font-size: 10px;
   letter-spacing: 1px;
-  color: var(--ink-dim);
+  color: var(--ink);
+  text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
   opacity: 0;
   transition: opacity 220ms ease;
 }
 
 .turn-label--visible {
   opacity: 1;
+}
+
+/* Thin countdown strip sitting just below .turn-label, still over the hand panel's top edge
+   (see TurnTimerBar.tsx) - online only, server-enforced, this is cosmetic warning only.
+   "Reversed" loading bar: starts full and shrinks as time runs out, not the other way. */
+.turn-timer {
+  position: absolute;
+  top: 16px;
+  left: 8px;
+  right: 8px;
+  z-index: 5;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.turn-timer__seconds {
+  font-family: var(--cp-font-display);
+  font-size: 9px;
+  min-width: 20px;
+  color: var(--ink);
+  text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+}
+
+.turn-timer__track {
+  flex: 1;
+  height: 3px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.turn-timer__fill {
+  height: 100%;
+  background: var(--ink);
+  transition: width 200ms linear;
 }
 
 /* The actual tap target for a move's landing square - a small animated ring, not a filled
@@ -766,6 +838,50 @@ canvas {
 .lobby__start {
   margin-top: 4px;
   font-size: 1.1rem;
+}
+
+.lobby__mode-toggle {
+  margin-bottom: 4px;
+}
+
+.lobby__code-input {
+  font-family: var(--cp-font-body);
+  font-size: 1rem;
+  min-height: var(--target-min-touch);
+  padding: 0.5em 0.8em;
+  background: var(--bg-raised);
+  color: var(--ink);
+  border: 3px solid var(--ink-dim);
+  width: 100%;
+  max-width: 240px;
+}
+
+.lobby__code-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.lobby__error {
+  margin: 0;
+  font-size: 0.8rem;
+  /* Not --player-red - that token measures ~4.5:1 on --bg-raised, right at (and by strict
+     calculation, just under) the WCAG AA 4.5:1 floor for this text's size. This lighter
+     tint clears it with real margin (~6.2:1). */
+  color: #ff8a9c;
+}
+
+.lobby__code {
+  font-family: var(--cp-font-display);
+  font-size: 1.4rem;
+  letter-spacing: 2px;
+  text-align: center;
+  padding: 10px;
+  background: var(--bg-raised);
+  border: 3px solid var(--ink-dim);
+}
+
+.lobby__seat-label--empty {
+  color: var(--ink-dim);
 }
 
 .win-screen {

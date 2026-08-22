@@ -70,7 +70,7 @@ export class TableScene extends Phaser.Scene {
   private marbleLayer?: Phaser.GameObjects.Container;
   private titleText?: Phaser.GameObjects.Text;
   private geo: BoardGeometry = {
-    center: { x: 0, y: 0 }, trackRadius: 0, kennelRadius: 0, homeRadiusOuter: 0, homeRadiusStep: 0, stackOffset: 0, stackCenter: { x: 0, y: 0 },
+    center: { x: 0, y: 0 }, trackRadius: 0, kennelRadius: 0, homeRadiusOuter: 0, homeRadiusStep: 0, stackOffset: 0, stackCenter: { x: 0, y: 0 }, rotation: 0,
   };
   private marbleSprites = new Map<string, Phaser.GameObjects.Image>();
   private lastDiscardCardId: string | null = null;
@@ -79,6 +79,10 @@ export class TableScene extends Phaser.Scene {
   /** Seat (PlayerId) -> palette/sprite index (0-5), from the lobby's color picker - default
    * identity if never set (each seat gets the palette color matching its own index). */
   private colorAssignment: number[] = [0, 1, 2, 3, 4, 5];
+  /** Whose base renders at the bottom of the ring - see boardLayout.ts's BoardGeometry.rotation.
+   * Updated every render (not one-time like colorAssignment) since local hotseat re-rotates
+   * to face whoever's turn it currently is - see GameBoard.tsx's mySeat prop. */
+  private viewerSeat: PlayerId = 0;
 
   constructor() {
     super('TableScene');
@@ -142,6 +146,13 @@ export class TableScene extends Phaser.Scene {
    * mid-game, so this isn't threaded through every setGameState call. */
   setColorAssignment(colors: number[]) {
     this.colorAssignment = colors;
+  }
+
+  /** Called every render (see PhaserGame.ts) - unlike colors, the viewer seat can legitimately
+   * change turn to turn (local hotseat rotates to face whoever's acting). Doesn't itself
+   * trigger a re-layout; relies on setGameState/layout running afterward in the same tick. */
+  setViewerSeat(seat: PlayerId) {
+    this.viewerSeat = seat;
   }
 
   private get pieceScale(): number {
@@ -208,7 +219,7 @@ export class TableScene extends Phaser.Scene {
     // once in create()/layout() - config isn't known until the first real setGameState
     // call, and doesn't change again after that for a given TableScene instance (each game
     // gets its own), so recomputing every render is just cheap redundancy, not a bug.
-    this.geo = computeBoardGeometry(width, height, trackLengthFor(this.state.config));
+    this.geo = computeBoardGeometry(width, height, trackLengthFor(this.state.config), this.viewerSeat, this.state.config.playerCount);
     this.titleText?.setPosition(this.geo.center.x, 36);
     // Cheap enough to redraw every render (a turn-based game, not a twitch one) - simpler
     // than tracking whether state.config actually changed since the last call.
