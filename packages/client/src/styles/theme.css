@@ -768,6 +768,55 @@ canvas {
   font-size: 1.1rem;
 }
 
+.lobby__mode-toggle {
+  margin-bottom: 4px;
+}
+
+.lobby__code-input {
+  font-family: var(--cp-font-body);
+  font-size: 1rem;
+  min-height: var(--target-min-touch);
+  padding: 0.5em 0.8em;
+  background: var(--bg-raised);
+  color: var(--ink);
+  border: 3px solid var(--ink-dim);
+  width: 100%;
+  max-width: 240px;
+}
+
+.lobby__code-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.lobby__error {
+  margin: 0;
+  font-size: 0.8rem;
+  /* Not --player-red - that token measures ~4.5:1 on --bg-raised, right at (and by strict
+     calculation, just under) the WCAG AA 4.5:1 floor for this text's size. This lighter
+     tint clears it with real margin (~6.2:1). */
+  color: #ff8a9c;
+}
+
+.lobby__code {
+  font-family: var(--cp-font-display);
+  font-size: 1.4rem;
+  letter-spacing: 2px;
+  text-align: center;
+  padding: 10px;
+  background: var(--bg-raised);
+  border: 3px solid var(--ink-dim);
+}
+
+.lobby__seat-label--empty {
+  color: var(--ink-dim);
+}
+
+.online-wait-message {
+  text-align: center;
+  padding: 12px;
+}
+
 .win-screen {
   position: fixed;
   inset: 0;
