@@ -4,7 +4,7 @@ import { Schema, type, ArraySchema } from '@colyseus/schema';
 import {
   createInitialState, startGame, getLegalMoves, applyMove, advanceTurn, passHand,
 } from '@crazypixel/shared';
-import type { GameConfig, GameMode, GameState, Move, PlayerId } from '@crazypixel/shared';
+import type { Card, GameConfig, GameMode, GameState, Move, PlayerId } from '@crazypixel/shared';
 
 const TURN_MS = 20_000;
 
@@ -38,6 +38,14 @@ interface PlayMessage {
   move: Move;
 }
 
+interface StealPreviewMessage {
+  targetPlayer: PlayerId;
+  card: Card;
+  /** null while the thief has only committed to a target (tapped their kennel), set once a
+   * specific hand position is picked - see StealCardOverlay.tsx. */
+  cardIndex: number | null;
+}
+
 /**
  * Server-authoritative game room: re-derives legal moves via the shared engine before
  * accepting anything a client sends, so a stale/buggy/malicious client can't desync the
@@ -61,6 +69,7 @@ export class GameRoom extends Room<RoomState> {
 
     this.onMessage('play', (client, message: PlayMessage) => this.handlePlay(client, message));
     this.onMessage('passHand', (client) => this.handlePassHand(client));
+    this.onMessage('stealPreview', (client, message: StealPreviewMessage) => this.handleStealPreview(client, message));
   }
 
   onJoin(client: Client) {
@@ -147,6 +156,21 @@ export class GameRoom extends Room<RoomState> {
     if (!isLegal) return;
 
     this.commitTurn((next) => applyMove(next, seat, move));
+  }
+
+  /** Purely a cosmetic relay - never mutates gameState/stateJson. Lets the victim's client
+   * react live to a steal in progress (see StealCardOverlay.tsx/GameBoard.tsx) before the
+   * real move ever commits: their card genuinely might still change (the thief could tap a
+   * different target, or a different hand position) right up until the real `play` message
+   * arrives, so this is only ever a preview, never authoritative. Only lightly validated
+   * (current player's turn) - worst case a stale/malicious client shows a wrong preview for
+   * a moment, nothing that touches real game state. */
+  private handleStealPreview(client: Client, message: StealPreviewMessage) {
+    const state = this.gameState;
+    if (!state || this.state.phase !== 'playing') return;
+    const seat = this.seatFor(client);
+    if (seat === null || seat !== state.currentPlayer) return;
+    this.broadcast('stealPreview', { thief: seat, ...message });
   }
 
   private handlePassHand(client: Client) {

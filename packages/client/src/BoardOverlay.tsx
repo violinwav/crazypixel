@@ -30,18 +30,27 @@ function isSevenSplitMove(move: Move): boolean {
   return false;
 }
 
+/** Fired twice during a steal: once the moment the player commits to a target (tapping the
+ * opponent's kennel/"red circle", cardIndex null), again once they pick a specific hand
+ * position (cardIndex set) - see FigureThenMoves' handleFigureClick and
+ * StealCardOverlay.tsx. GameBoard uses the first call to start the card's fly-to-discard
+ * animation right there instead of waiting for StealCardOverlay's own reveal flight to
+ * finish ("lay the card down" at the moment of committing to steal, not after), and relays
+ * both online so the victim's client can show its own live preview (see
+ * useOnlineGameState.ts's stealPreview/sendStealProgress) - a no-op for local hotseat. */
+export interface StealProgressInfo {
+  targetPlayer: PlayerId;
+  card: Card;
+  cardIndex: number | null;
+}
+
 interface Props {
   state: GameState;
   selectedCard: Card | null;
   containerSize: { width: number; height: number };
   onPlay: (player: PlayerId, move: Move) => void;
   mySeat: PlayerId;
-  /** Fired the moment the player commits to stealing from a specific opponent (tapping their
-   * kennel/"red circle"), before they've picked which hand position - see FigureThenMoves'
-   * handleFigureClick. Lets GameBoard start the card's fly-to-discard animation right there
-   * instead of waiting for StealCardOverlay's own reveal flight to finish, per feedback that
-   * the card should visually "lay down" at the moment of committing to steal, not after. */
-  onCardLeavingHand: (card: Card) => void;
+  onStealProgress: (info: StealProgressInfo) => void;
 }
 
 // Sits absolutely positioned over the Phaser canvas. Selecting a card highlights real board
@@ -52,7 +61,7 @@ interface Props {
 // game/figureTargets.ts for the two-phase "pick the piece, then pick where it goes" split,
 // game/moveTargets.ts for how a resolved move maps to a board position, and
 // SevenSplitOverlay for the 7's dedicated multi-marble allocator.
-export function BoardOverlay({ state, selectedCard, containerSize, onPlay, mySeat, onCardLeavingHand }: Props) {
+export function BoardOverlay({ state, selectedCard, containerSize, onPlay, mySeat, onStealProgress }: Props) {
   const [jokerRank, setJokerRank] = useState<CardRank | 'START' | null>(null);
   // Without this, jokerRank survives past the card that produced it - deselecting the Joker
   // (or any card change at all, including a different player's turn picking a Joker again)
@@ -118,7 +127,7 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay, mySea
         geo={geo}
         player={player}
         onPlay={onPlay}
-        onCardLeavingHand={onCardLeavingHand}
+        onStealProgress={onStealProgress}
       />
     );
   }
@@ -131,7 +140,7 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay, mySea
       geo={geo}
       player={player}
       onPlay={onPlay}
-      onCardLeavingHand={onCardLeavingHand}
+      onStealProgress={onStealProgress}
     />
   );
 }
@@ -141,13 +150,13 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay, mySea
  * everything else through the normal figure-then-target flow. Both can legally coexist on
  * one card (an 8 offers "copy the 7" alongside its own plain move-8), so both render at
  * once rather than one replacing the other. */
-function MoveRouter({ state, moves, geo, player, onPlay, onCardLeavingHand }: FigureThenMovesProps) {
+function MoveRouter({ state, moves, geo, player, onPlay, onStealProgress }: FigureThenMovesProps) {
   const splitMoves = moves.filter(isSevenSplitMove);
   const otherMoves = moves.filter((m) => !isSevenSplitMove(m));
 
   if (splitMoves.length === 0) {
     return (
-      <FigureThenMoves state={state} moves={moves} geo={geo} player={player} onPlay={onPlay} onCardLeavingHand={onCardLeavingHand} />
+      <FigureThenMoves state={state} moves={moves} geo={geo} player={player} onPlay={onPlay} onStealProgress={onStealProgress} />
     );
   }
 
@@ -157,7 +166,7 @@ function MoveRouter({ state, moves, geo, player, onPlay, onCardLeavingHand }: Fi
         <SevenSplitOverlay state={state} moves={splitMoves} geo={geo} onPlay={onPlay} />
       </div>
       {otherMoves.length > 0 && (
-        <FigureThenMoves state={state} moves={otherMoves} geo={geo} player={player} onPlay={onPlay} onCardLeavingHand={onCardLeavingHand} />
+        <FigureThenMoves state={state} moves={otherMoves} geo={geo} player={player} onPlay={onPlay} onStealProgress={onStealProgress} />
       )}
     </>
   );
@@ -169,14 +178,14 @@ interface FigureThenMovesProps {
   geo: ReturnType<typeof computeBoardGeometry>;
   player: PlayerId;
   onPlay: Props['onPlay'];
-  onCardLeavingHand: Props['onCardLeavingHand'];
+  onStealProgress: Props['onStealProgress'];
 }
 
 /** Two-phase move picker: highlight the pieces that can act (a marble, your base, an
  * opponent's hand for a steal), then - once one is picked - highlight where it can go. The
  * `key` prop callers pass (selectedCard.id / jokerRank) forces a fresh instance whenever the
  * underlying move set changes, so this never carries a stale figure selection across cards. */
-function FigureThenMoves({ state, moves, geo, player, onPlay, onCardLeavingHand }: FigureThenMovesProps) {
+function FigureThenMoves({ state, moves, geo, player, onPlay, onStealProgress }: FigureThenMovesProps) {
   const [figureKey, setFigureKey] = useState<string | null>(null);
   const { figures, unresolved } = groupMovesByFigure(state, moves, geo);
   // A single eligible piece is no real choice - skip straight to its moves rather than
@@ -222,10 +231,11 @@ function FigureThenMoves({ state, moves, geo, player, onPlay, onCardLeavingHand 
       return;
     }
     // Committing to steal from this opponent is itself the "lay the card down" moment, not
-    // whichever hand position gets tapped next (StealCardOverlay) - see onCardLeavingHand's
-    // own comment on Props.
+    // whichever hand position gets tapped next (StealCardOverlay) - see onStealProgress's
+    // own comment on StealProgressInfo.
     if (f.key.startsWith('opponent:')) {
-      onCardLeavingHand(f.moves[0].card);
+      const targetPlayer = Number(f.key.split(':')[1]) as PlayerId;
+      onStealProgress({ targetPlayer, card: f.moves[0].card, cardIndex: null });
     }
     setFigureKey(f.key);
   };
@@ -262,7 +272,14 @@ function FigureThenMoves({ state, moves, geo, player, onPlay, onCardLeavingHand 
     const targetPlayer = Number(selected.key.split(':')[1]) as PlayerId;
     return (
       <div className="board-overlay">
-        <StealCardOverlay state={state} moves={selected.moves} onPlay={onPlay} forcedTarget={targetPlayer} onBack={goBack} />
+        <StealCardOverlay
+          state={state}
+          moves={selected.moves}
+          onPlay={onPlay}
+          forcedTarget={targetPlayer}
+          onBack={goBack}
+          onStealProgress={onStealProgress}
+        />
       </div>
     );
   }

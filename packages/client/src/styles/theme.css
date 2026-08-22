@@ -259,6 +259,15 @@ body {
   opacity: 0.35;
 }
 
+/* An opponent's steal-in-progress has picked this exact card (see HandPanel.tsx's
+   highlightedCardId / GameBoard.tsx's stealPreview) - the "which card has been chosen"
+   preview, before the real move has even committed. */
+.playing-card--threatened {
+  outline: 3px solid var(--player-red);
+  outline-offset: 3px;
+  animation: board-figure-pulse 1s ease-in-out infinite;
+}
+
 .playing-card:focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: 3px;

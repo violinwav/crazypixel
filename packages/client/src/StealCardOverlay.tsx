@@ -3,6 +3,7 @@ import type { GameState, Move, PlayerId } from '@crazypixel/shared';
 import { CARD_BACK_SPRITE } from './game/cardArt';
 import { StealFlight } from './StealFlight';
 import type { StealFlightPlan } from './StealFlight';
+import type { StealProgressInfo } from './BoardOverlay';
 
 type ForceDrawMove = Extract<Move, { kind: 'forceDraw' }>;
 
@@ -20,6 +21,9 @@ interface Props {
    * set, since going back means re-opening the figure list one level up, not re-picking
    * within this component. */
   onBack?: () => void;
+  /** Called with cardIndex set the moment a specific hand position is tapped (before the
+   * flight/reveal animation even starts) - see BoardOverlay.tsx's StealProgressInfo. */
+  onStealProgress: (info: StealProgressInfo) => void;
 }
 
 /** Unwraps copyLastCard/wildAs down to the underlying forceDraw, same pattern as
@@ -37,7 +41,7 @@ export function unwrapForceDraw(move: Move): ForceDrawMove | null {
 // then pick a position. Once a position is committed to, StealFlight reveals the real card
 // mid-flight into the thief's hand (see its own comment on why that's fine to show) rather
 // than the move applying with an instant teleport.
-export function StealCardOverlay({ state, moves, onPlay, forcedTarget, onBack }: Props) {
+export function StealCardOverlay({ state, moves, onPlay, forcedTarget, onBack, onStealProgress }: Props) {
   const [targetPlayer, setTargetPlayer] = useState<PlayerId | null>(forcedTarget ?? null);
   const [flight, setFlight] = useState<{ plan: StealFlightPlan; move: Move } | null>(null);
   const player = state.currentPlayer;
@@ -88,6 +92,7 @@ export function StealCardOverlay({ state, moves, onPlay, forcedTarget, onBack }:
               className="playing-card steal-overlay__card"
               aria-label={`Draw Player ${targetPlayer + 1}'s card, ${i + 1} of ${cardCount}`}
               onClick={(e) => {
+                onStealProgress({ targetPlayer, card: match.top.card, cardIndex: i });
                 const fromRect = e.currentTarget.getBoundingClientRect();
                 const handRect = document.querySelector('.hand-panel')?.getBoundingClientRect();
                 if (!handRect) {

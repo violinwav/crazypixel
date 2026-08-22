@@ -26,6 +26,10 @@ interface Props {
   interactive: boolean;
   selectedCardId: string | null;
   onSelectCard: (cardId: string | null) => void;
+  /** Pulses this specific card - an opponent's steal-in-progress has picked it as the card
+   * they're taking, before the real move has even committed (see GameBoard.tsx's
+   * stealPreview/OnlineGameView). undefined outside that moment. */
+  highlightedCardId?: string | null;
 }
 
 // Move selection itself now lives in BoardOverlay (highlighted board positions, not a text
@@ -37,7 +41,7 @@ interface Props {
 // background-image so the display-font rank text can still sit crisply on top of it. Turn
 // label and the no-legal-moves fallback both live on the board now (see BoardStatus.tsx),
 // not boxed inside this panel.
-export function HandPanel({ state, player, interactive, selectedCardId, onSelectCard }: Props) {
+export function HandPanel({ state, player, interactive, selectedCardId, onSelectCard, highlightedCardId }: Props) {
   const hand = state.hands[player];
 
   // Re-arms on every turn switch (not just the initial deal) - a plain hand reveal with no
@@ -60,15 +64,16 @@ export function HandPanel({ state, player, interactive, selectedCardId, onSelect
           // hand) - `interactive` is what actually reflects whether it's this hand's turn.
           const hasMoves = interactive && getLegalMoves(state, player, card).length > 0;
           const isSelected = selectedCardId === card.id;
+          const isThreatened = highlightedCardId === card.id;
           return (
             <button
               key={card.id}
               type="button"
               data-card-id={card.id}
-              className={`playing-card hand-panel__card${!hasMoves && settled ? ' playing-card--dim' : ''}`}
+              className={`playing-card hand-panel__card${!hasMoves && settled ? ' playing-card--dim' : ''}${isThreatened ? ' playing-card--threatened' : ''}`}
               style={{ '--card-face': `url(${CARD_FACE_SPRITE[card.rank]})` } as CSSProperties}
               aria-pressed={isSelected}
-              aria-label={`${card.rank} of ${card.suit ?? 'no suit'}${hasMoves ? '' : ', no legal moves'}`}
+              aria-label={`${card.rank} of ${card.suit ?? 'no suit'}${hasMoves ? '' : ', no legal moves'}${isThreatened ? ', being taken' : ''}`}
               // Not the native `disabled` attribute - Chromium/WebKit skip CSS transitions
               // entirely on disabled form controls, so the --dim opacity fade above always
               // cut instantly regardless of the settle timer (confirmed live). aria-disabled
