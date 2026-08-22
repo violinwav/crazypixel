@@ -77,10 +77,17 @@ online multiplayer (host/join by room code) both work today - see Architecture b
   around the track; landing exactly on your own base square by going backward earns the
   *right* to enter home on a later, separate forward move — `planMovement` doesn't special-
   case this at all, it falls out of the ordinary forward-overflow-into-home branch for free.
-- **`@colyseus/schema`'s `@type` decorators need `experimentalDecorators: true`.** Set in
-  `packages/server/tsconfig.json` specifically for `GameRoom.ts`'s `RoomState` class — the
-  stub room never used decorators, so this wasn't needed before. Don't remove it while any
-  Schema subclass exists there.
+- **`@colyseus/schema`'s `@type` decorators need `experimentalDecorators: true` *and*
+  `useDefineForClassFields: false`.** Both set in `packages/server/tsconfig.json` for
+  `GameRoom.ts`'s `RoomState` class. Missing the second one is the nastier failure mode: it
+  doesn't error anywhere, decorators still apply, `onStateChange` still fires on clients -
+  but every field decorated with `@type(...)` and given a class-field default
+  (`@type('string') phase = 'waiting'`) silently decodes as `undefined` on every client
+  forever, because TS's ES2022+ native class-field init (`useDefineForClassFields: true`,
+  the default at `target: "ES2022"`) overwrites the property descriptor the decorator set
+  up. Confirmed via a throwaway `colyseus.js` script connecting two clients and logging
+  `room.state` before/after - don't trust reasoning alone on this one, the actual decoded
+  values are the only way to tell "silently broken" from "working."
 
 ## Conventions
 
