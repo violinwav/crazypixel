@@ -74,15 +74,19 @@ export function OnlineLobby({ onReady }: Props) {
     return (
       <section className="cp-panel lobby__section">
         <h2 className="lobby__heading">Join a Game</h2>
+        <label className="lobby__hint" htmlFor="online-lobby-code-input">Room code</label>
         <input
+          id="online-lobby-code-input"
           type="text"
           className="lobby__code-input"
           value={step.code}
-          placeholder="Room code"
-          aria-label="Room code"
+          aria-describedby={step.error ? 'online-lobby-code-error' : undefined}
+          aria-invalid={step.error ? true : undefined}
           onChange={(e) => setStep({ kind: 'joinCode', code: e.target.value, error: null })}
         />
-        {step.error && <p className="lobby__error">{step.error}</p>}
+        {step.error && (
+          <p id="online-lobby-code-error" className="lobby__error" role="alert">{step.error}</p>
+        )}
         <button
           type="button"
           className="cp-button"
@@ -102,7 +106,9 @@ export function OnlineLobby({ onReady }: Props) {
   }
 
   if (step.kind === 'connecting') {
-    return <p className="lobby__hint">Connecting…</p>;
+    return (
+      <p className="lobby__hint" role="status">Connecting…</p>
+    );
   }
 
   return <WaitingRoom room={step.room} isHost={step.isHost} onReady={onReady} />;
@@ -133,6 +139,13 @@ function WaitingRoom({ room, isHost, onReady }: { room: Room<RoomState>; isHost:
 
   const filledSeats = room.state.seatSessionIds.length;
   const totalSeats = room.state.playerCount;
+  // One persistent live region for everything that changes here (room creation, seats
+  // filling) - same convention as GameBoard's lastMoveAnnouncement paragraph, rather than
+  // marking individually mounting/unmounting elements as live (unreliable across screen
+  // readers when the region itself appears at the same time as its content).
+  const announcement = isHost
+    ? `Room created. Code ${room.id}. ${filledSeats} of ${totalSeats} players connected.`
+    : `${filledSeats} of ${totalSeats} players connected.`;
 
   return (
     <section className="cp-panel lobby__section">
@@ -153,6 +166,7 @@ function WaitingRoom({ room, isHost, onReady }: { room: Room<RoomState>; isHost:
         ))}
       </div>
       <p className="lobby__hint">{filledSeats} / {totalSeats} players connected.</p>
+      <p aria-live="polite" className="visually-hidden">{announcement}</p>
     </section>
   );
 }

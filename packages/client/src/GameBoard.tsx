@@ -85,6 +85,10 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
     state.lastPlayedCard && state.lastPlayedBy !== null
       ? `Player ${state.lastPlayedBy + 1} played ${state.lastPlayedCard.rank}${state.lastPlayedCard.suit ? ` of ${state.lastPlayedCard.suit}` : ''}.`
       : '';
+  // Announces whose turn it now is, not just what was played - matters most online, where
+  // the hand panel/board overlay silently mount or unmount based on isMyTurn with no other
+  // cue for a screen reader user that the board just became (or stopped being) interactive.
+  const turnAnnouncement = isMyTurn ? "It's your turn." : `Waiting for Player ${state.currentPlayer + 1}.`;
 
   const selectedCard = state.hands[state.currentPlayer].find((c) => c.id === selectedCardId) ?? null;
 
@@ -122,7 +126,7 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
       {/* Board state changes are driven from here, not narrated by the canvas itself - the
           canvas has no way to expose that to assistive tech, this text does. */}
       <p aria-live="polite" className="visually-hidden">
-        {lastMoveAnnouncement}
+        {lastMoveAnnouncement} {turnAnnouncement}
       </p>
       <TurnLabel player={state.currentPlayer} />
       <div ref={handPanelRef} className="hand-panel-slot" style={{ opacity: dealPlan ? 0 : 1 }}>
