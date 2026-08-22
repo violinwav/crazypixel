@@ -18,7 +18,7 @@ interface Props {
 
 type Step =
   | { kind: 'choose' }
-  | { kind: 'hostConfig'; setup: PlayerSetup }
+  | { kind: 'hostConfig'; setup: PlayerSetup; error: string | null }
   | { kind: 'joinCode'; code: string; error: string | null }
   | { kind: 'connecting' }
   | { kind: 'waiting'; room: Room<RoomState>; isHost: boolean };
@@ -37,6 +37,7 @@ export function OnlineLobby({ onReady }: Props) {
             onClick={() => setStep({
               kind: 'hostConfig',
               setup: { config: { playerCount: 4, mode: 'ffa' }, colors: defaultColors(4) },
+              error: null,
             })}
           >
             Host a Game
@@ -53,7 +54,10 @@ export function OnlineLobby({ onReady }: Props) {
     const { setup } = step;
     return (
       <>
-        <PlayerSetupPicker value={setup} onChange={(next) => setStep({ kind: 'hostConfig', setup: next })} />
+        <PlayerSetupPicker value={setup} onChange={(next) => setStep({ kind: 'hostConfig', setup: next, error: null })} />
+        {step.error && (
+          <p className="lobby__error" role="alert">{step.error}</p>
+        )}
         <button
           type="button"
           className="cp-button lobby__start"
@@ -61,7 +65,7 @@ export function OnlineLobby({ onReady }: Props) {
             setStep({ kind: 'connecting' });
             createRoom(setup)
               .then((room) => setStep({ kind: 'waiting', room, isHost: true }))
-              .catch(() => setStep({ kind: 'hostConfig', setup }));
+              .catch(() => setStep({ kind: 'hostConfig', setup, error: 'Could not create room. Check your connection and try again.' }));
           }}
         >
           Create Room
