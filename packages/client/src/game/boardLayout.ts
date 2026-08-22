@@ -28,6 +28,14 @@ export interface BoardGeometry {
    * independent of the ring's own center, rather than sitting inside the ring where a
    * bigger ring (see radiusBoostFor) could crowd or cover them. */
   stackCenter: Point;
+  /** Radians added to every track-angle calculation so the viewer's own start square always
+   * renders at the bottom of the ring (screen-down), regardless of that seat's absolute
+   * track position - "my base always faces me." Baked into the geometry object (not a
+   * separate parameter every point function takes) specifically so trackPoint/
+   * kennelSlotPoint/homeSlotPoint's signatures stay unchanged - every caller that already
+   * receives a `geo` (figureTargets.ts, moveTargets.ts, SevenSplitOverlay.tsx) gets correct
+   * rotation for free, only computeBoardGeometry's own call sites need to pass a viewer. */
+  rotation: number;
 }
 
 const REFERENCE_TRACK_RADIUS = 220;
@@ -67,7 +75,20 @@ function radiusBoostFor(trackLength: number): number {
 // (see TableScene.ts's CARD_HEIGHT) plus breathing room above the hand panel below it.
 const STACK_BOTTOM_MARGIN = 95;
 
-export function computeBoardGeometry(width: number, height: number, trackLength: number = REFERENCE_TRACK_LENGTH): BoardGeometry {
+/**
+ * @param viewerSeat Whose base should render at the bottom of the ring - see
+ * `BoardGeometry.rotation`. Pass the same seat consistently across a render (mySeat from
+ * GameBoard.tsx) or Phaser and the DOM overlay will disagree about where things are.
+ * @param playerCount Needed to convert `viewerSeat` into a rotation angle - not derivable
+ * from `trackLength` alone without a `GameConfig` this function otherwise doesn't need.
+ */
+export function computeBoardGeometry(
+  width: number,
+  height: number,
+  trackLength: number = REFERENCE_TRACK_LENGTH,
+  viewerSeat: PlayerId = 0,
+  playerCount: number = 4,
+): BoardGeometry {
   const center: Point = { x: width / 2, y: height / 2 - 56 };
   // Kennels/goal markers extend beyond the track itself (up to KENNEL_RATIO further out),
   // so size the track off what leaves room for that, not the raw viewport half-size.
@@ -75,6 +96,11 @@ export function computeBoardGeometry(width: number, height: number, trackLength:
   const desiredRadius = REFERENCE_TRACK_RADIUS * radiusBoostFor(trackLength);
   const trackRadius = Math.max(80, Math.min(desiredRadius, available / KENNEL_RATIO));
   const stackCenter: Point = { x: width / 2, y: Math.max(center.y + trackRadius * 0.3, height - STACK_BOTTOM_MARGIN) };
+  // viewerSeat's own start index sits at trackLength * (viewerSeat / playerCount) before any
+  // rotation - angleForTrackIndex already offsets by -PI/2 to put index 0 at the top, so
+  // landing that seat at the bottom (+PI/2) needs a further +PI, then subtract its own
+  // unrotated angle to cancel it out.
+  const rotation = Math.PI - (viewerSeat / playerCount) * Math.PI * 2;
   return {
     center,
     trackRadius,
@@ -83,27 +109,28 @@ export function computeBoardGeometry(width: number, height: number, trackLength:
     homeRadiusStep: trackRadius * HOME_STEP_RATIO,
     stackOffset: trackRadius * STACK_OFFSET_RATIO,
     stackCenter,
+    rotation,
   };
 }
 
-function angleForTrackIndex(index: number, trackLength: number): number {
-  return (index / trackLength) * Math.PI * 2 - Math.PI / 2;
+function angleForTrackIndex(index: number, trackLength: number, rotation: number): number {
+  return (index / trackLength) * Math.PI * 2 - Math.PI / 2 + rotation;
 }
 
 export function trackPoint(index: number, trackLength: number, geo: BoardGeometry): Point {
-  const angle = angleForTrackIndex(index, trackLength);
+  const angle = angleForTrackIndex(index, trackLength, geo.rotation);
   return { x: geo.center.x + Math.cos(angle) * geo.trackRadius, y: geo.center.y + Math.sin(angle) * geo.trackRadius };
 }
 
 export function kennelSlotPoint(config: GameConfig, player: PlayerId, slot: number, geo: BoardGeometry): Point {
   const trackLength = trackLengthFor(config);
-  const angle = angleForTrackIndex(startIndexFor(config, player), trackLength) + (slot - (KENNEL_SIZE - 1) / 2) * 0.2;
+  const angle = angleForTrackIndex(startIndexFor(config, player), trackLength, geo.rotation) + (slot - (KENNEL_SIZE - 1) / 2) * 0.2;
   return { x: geo.center.x + Math.cos(angle) * geo.kennelRadius, y: geo.center.y + Math.sin(angle) * geo.kennelRadius };
 }
 
 export function homeSlotPoint(config: GameConfig, player: PlayerId, slot: number, geo: BoardGeometry): Point {
   const trackLength = trackLengthFor(config);
-  const angle = angleForTrackIndex(startIndexFor(config, player), trackLength);
+  const angle = angleForTrackIndex(startIndexFor(config, player), trackLength, geo.rotation);
   const radius = geo.homeRadiusOuter - slot * geo.homeRadiusStep;
   return { x: geo.center.x + Math.cos(angle) * radius, y: geo.center.y + Math.sin(angle) * radius };
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { getLegalMoves } from '@crazypixel/shared';
-import type { GameState } from '@crazypixel/shared';
+import type { GameState, PlayerId } from '@crazypixel/shared';
 import { CARD_FACE_SPRITE } from './game/cardArt';
 import { CardRankIndices } from './CardRankIndices';
 
@@ -16,6 +16,14 @@ const SETTLE_MS = 260;
 
 interface Props {
   state: GameState;
+  /** Whose hand to show - the viewer's own seat, not necessarily state.currentPlayer. Online
+   * play shows your hand at all times, not just on your turn (see GameBoard.tsx); local
+   * hotseat always passes state.currentPlayer, so this is a no-op change there. */
+  player: PlayerId;
+  /** False when it isn't player's turn - every card renders dim/inert rather than showing
+   * real legality (which getLegalMoves would happily compute for a non-current player too,
+   * since it isn't itself turn-aware) and clicks are ignored. */
+  interactive: boolean;
   selectedCardId: string | null;
   onSelectCard: (cardId: string | null) => void;
 }
@@ -29,8 +37,7 @@ interface Props {
 // background-image so the display-font rank text can still sit crisply on top of it. Turn
 // label and the no-legal-moves fallback both live on the board now (see BoardStatus.tsx),
 // not boxed inside this panel.
-export function HandPanel({ state, selectedCardId, onSelectCard }: Props) {
-  const player = state.currentPlayer;
+export function HandPanel({ state, player, interactive, selectedCardId, onSelectCard }: Props) {
   const hand = state.hands[player];
 
   // Re-arms on every turn switch (not just the initial deal) - a plain hand reveal with no
@@ -42,13 +49,16 @@ export function HandPanel({ state, selectedCardId, onSelectCard }: Props) {
     setSettled(false);
     const timer = setTimeout(() => setSettled(true), SETTLE_MS);
     return () => clearTimeout(timer);
-  }, [player]);
+  }, [player, interactive]);
 
   return (
     <section className="hand-panel">
       <div role="group" aria-label="Your hand" className="hand-panel__cards">
         {hand.map((card) => {
-          const hasMoves = getLegalMoves(state, player, card).length > 0;
+          // getLegalMoves isn't itself turn-aware (it'll happily compute moves for a player
+          // who isn't state.currentPlayer - see StealCardOverlay previewing an opponent's
+          // hand) - `interactive` is what actually reflects whether it's this hand's turn.
+          const hasMoves = interactive && getLegalMoves(state, player, card).length > 0;
           const isSelected = selectedCardId === card.id;
           return (
             <button

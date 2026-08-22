@@ -13,12 +13,14 @@ import type { TurnAnimation } from './animationPlan';
 // doc's out-of-scope note on server-driven animations).
 export function useOnlineGameState(room: Room<RoomState>) {
   const [state, setState] = useState<GameState>(() => JSON.parse(room.state.stateJson) as GameState);
+  const [turnDeadline, setTurnDeadline] = useState(room.state.turnDeadline);
   const lastPlanRef = useRef<TurnAnimation>(EMPTY_TURN_ANIMATION);
 
   useEffect(() => {
     const applyStateJson = () => {
       if (!room.state.stateJson) return;
       setState(JSON.parse(room.state.stateJson) as GameState);
+      setTurnDeadline(room.state.turnDeadline);
     };
     room.onStateChange(applyStateJson);
     // No unsubscribe - this hook lives for the whole online game session, same lifecycle
@@ -33,5 +35,5 @@ export function useOnlineGameState(room: Room<RoomState>) {
     room.send('passHand');
   }, [room]);
 
-  return { state, play, passCurrentHand, lastPlanRef };
+  return { state, play, passCurrentHand, lastPlanRef, turnDeadline };
 }

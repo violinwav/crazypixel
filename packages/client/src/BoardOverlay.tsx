@@ -35,6 +35,7 @@ interface Props {
   selectedCard: Card | null;
   containerSize: { width: number; height: number };
   onPlay: (player: PlayerId, move: Move) => void;
+  mySeat: PlayerId;
 }
 
 // Sits absolutely positioned over the Phaser canvas. Selecting a card highlights real board
@@ -45,7 +46,7 @@ interface Props {
 // game/figureTargets.ts for the two-phase "pick the piece, then pick where it goes" split,
 // game/moveTargets.ts for how a resolved move maps to a board position, and
 // SevenSplitOverlay for the 7's dedicated multi-marble allocator.
-export function BoardOverlay({ state, selectedCard, containerSize, onPlay }: Props) {
+export function BoardOverlay({ state, selectedCard, containerSize, onPlay, mySeat }: Props) {
   const [jokerRank, setJokerRank] = useState<CardRank | 'START' | null>(null);
   // Without this, jokerRank survives past the card that produced it - deselecting the Joker
   // (or any card change at all, including a different player's turn picking a Joker again)
@@ -56,7 +57,7 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay }: Pro
   if (!selectedCard || containerSize.width === 0) return null;
 
   const player = state.currentPlayer;
-  const geo = computeBoardGeometry(containerSize.width, containerSize.height, trackLengthFor(state.config));
+  const geo = computeBoardGeometry(containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount);
   const legalMoves = getLegalMoves(state, player, selectedCard);
 
   if (selectedCard.rank === 'JOKER') {

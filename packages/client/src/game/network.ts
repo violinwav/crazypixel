@@ -11,6 +11,8 @@ export interface RoomState {
   colors: number[];
   seatSessionIds: string[];
   stateJson: string;
+  /** Epoch ms when the current turn auto-plays - see GameRoom.ts's scheduleTurnTimeout. */
+  turnDeadline: number;
 }
 
 export function createRoom({ config, colors }: PlayerSetup): Promise<Room<RoomState>> {

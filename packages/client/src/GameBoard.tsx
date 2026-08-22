@@ -9,7 +9,9 @@ import { computeBoardGeometry, discardPileCenter, drawPileCenter } from './game/
 import { HandPanel } from './HandPanel';
 import { BoardOverlay } from './BoardOverlay';
 import { BoardStatus } from './BoardStatus';
+import { OpponentHandCounts } from './OpponentHandCounts';
 import { TurnLabel } from './TurnLabel';
+import { TurnTimerBar } from './TurnTimerBar';
 import { FlyingCard } from './FlyingCard';
 import type { FlightPlan } from './FlyingCard';
 import { DealAnimation } from './DealAnimation';
@@ -24,9 +26,13 @@ interface Props {
   lastPlanRef: MutableRefObject<TurnAnimation>;
   mySeat: PlayerId;
   colors: number[];
+  /** Server epoch ms when the current turn auto-plays - online only (see GameRoom.ts /
+   * useOnlineGameState.ts). undefined for local hotseat, which has no server to enforce a
+   * timeout and so shows no timer at all. */
+  turnDeadline?: number;
 }
 
-export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, mySeat, colors }: Props) {
+export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, mySeat, colors, turnDeadline }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const handPanelRef = useRef<HTMLDivElement>(null);
   const bridgeRef = useRef<PhaserBridge | null>(null);
@@ -50,8 +56,13 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
   }, []);
 
   useEffect(() => {
+    // Before setGameState - viewerSeat has to be current before the render it drives (see
+    // PhaserGame.ts's pushState ordering). mySeat changes turn to turn in local hotseat (it's
+    // always state.currentPlayer there), fixed for the whole session online - either way this
+    // re-rotates the board to keep mySeat's base at the bottom, "my base always faces me."
+    bridgeRef.current?.setViewerSeat(mySeat);
     bridgeRef.current?.setGameState(state, lastPlanRef.current);
-  }, [state, lastPlanRef]);
+  }, [state, lastPlanRef, mySeat]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -69,7 +80,9 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
     if (dealtRoundRef.current === state.roundIndex) return;
     if (!containerRef.current || !handPanelRef.current || containerSize.width === 0) return;
     dealtRoundRef.current = state.roundIndex;
-    const geo = computeBoardGeometry(containerSize.width, containerSize.height, trackLengthFor(state.config));
+    const geo = computeBoardGeometry(
+      containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
+    );
     const containerRect = containerRef.current.getBoundingClientRect();
     const deckPoint = drawPileCenter(geo);
     const handRect = handPanelRef.current.getBoundingClientRect();
@@ -86,8 +99,8 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
       ? `Player ${state.lastPlayedBy + 1} played ${state.lastPlayedCard.rank}${state.lastPlayedCard.suit ? ` of ${state.lastPlayedCard.suit}` : ''}.`
       : '';
   // Announces whose turn it now is, not just what was played - matters most online, where
-  // the hand panel/board overlay silently mount or unmount based on isMyTurn with no other
-  // cue for a screen reader user that the board just became (or stopped being) interactive.
+  // the board overlay silently mounts or unmounts based on isMyTurn with no other cue for a
+  // screen reader user that the board just became (or stopped being) interactive.
   const turnAnnouncement = isMyTurn ? "It's your turn." : `Waiting for Player ${state.currentPlayer + 1}.`;
 
   const selectedCard = state.hands[state.currentPlayer].find((c) => c.id === selectedCardId) ?? null;
@@ -98,7 +111,9 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
     if (cardEl && containerEl && containerSize.width > 0) {
       const fromRect = cardEl.getBoundingClientRect();
       const containerRect = containerEl.getBoundingClientRect();
-      const geo = computeBoardGeometry(containerSize.width, containerSize.height, trackLengthFor(state.config));
+      const geo = computeBoardGeometry(
+        containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
+      );
       const dest = discardPileCenter(geo);
       setFlight({
         card: move.card,
@@ -118,23 +133,27 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
         aria-label={`Game board. Player ${state.currentPlayer + 1}'s turn.`}
         style={{ flex: 1, minHeight: 0, position: 'relative' }}
       >
+        <OpponentHandCounts state={state} containerSize={containerSize} mySeat={mySeat} />
         {isMyTurn && (
-          <BoardOverlay state={state} selectedCard={selectedCard} containerSize={containerSize} onPlay={handlePlay} />
+          <BoardOverlay state={state} selectedCard={selectedCard} containerSize={containerSize} onPlay={handlePlay} mySeat={mySeat} />
         )}
-        {isMyTurn && <BoardStatus state={state} containerSize={containerSize} onPassHand={passCurrentHand} />}
+        {isMyTurn && <BoardStatus state={state} containerSize={containerSize} onPassHand={passCurrentHand} mySeat={mySeat} />}
       </div>
       {/* Board state changes are driven from here, not narrated by the canvas itself - the
           canvas has no way to expose that to assistive tech, this text does. */}
       <p aria-live="polite" className="visually-hidden">
         {lastMoveAnnouncement} {turnAnnouncement}
       </p>
-      <TurnLabel player={state.currentPlayer} />
       <div ref={handPanelRef} className="hand-panel-slot" style={{ opacity: dealPlan ? 0 : 1 }}>
-        {isMyTurn ? (
-          <HandPanel state={state} selectedCardId={selectedCardId} onSelectCard={setSelectedCardId} />
-        ) : (
-          <p className="lobby__hint online-wait-message">Waiting for Player {state.currentPlayer + 1}...</p>
-        )}
+        <TurnLabel player={state.currentPlayer} />
+        {turnDeadline !== undefined && <TurnTimerBar deadline={turnDeadline} />}
+        <HandPanel
+          state={state}
+          player={mySeat}
+          interactive={isMyTurn}
+          selectedCardId={selectedCardId}
+          onSelectCard={setSelectedCardId}
+        />
       </div>
       {flight && <FlyingCard plan={flight} onDone={() => setFlight(null)} />}
       {dealPlan && <DealAnimation plan={dealPlan} onDone={() => setDealPlan(null)} />}
