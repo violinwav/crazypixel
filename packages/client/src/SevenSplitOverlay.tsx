@@ -3,6 +3,7 @@ import { planMovement, trackLengthFor } from '@crazypixel/shared';
 import type { GameState, Marble, Move, PlayerId } from '@crazypixel/shared';
 import { trackPoint, homeSlotPoint } from './game/boardLayout';
 import type { BoardGeometry, Point } from './game/boardLayout';
+import { capturedPointsFor } from './game/moveTargets';
 import { PixelSlider } from './PixelSlider';
 
 function marblePoint(state: GameState, marble: Marble, trackLength: number, geo: BoardGeometry): Point | null {
@@ -148,6 +149,17 @@ export function SevenSplitOverlay({ state, moves, geo, onPlay }: Props) {
           />
         ));
       })}
+      {/* Foreseen-capture preview, only once the allocation is a real confirmable move - a
+          partial/in-progress allocation isn't a move the engine can simulate yet. Covers the
+          7's own pass-over capture (a marble doesn't have to be the *final* landing square
+          to go home - see GameEngine.ts's isMoveClear/applyMove), not just a landing one. */}
+      {readyMatch && capturedPointsFor(state, readyMatch.top, geo).map((p, i) => (
+        <div
+          key={`danger-${i}`}
+          className="board-overlay__danger"
+          style={{ left: p.x - TARGET_SIZE / 2, top: p.y - TARGET_SIZE / 2, width: TARGET_SIZE, height: TARGET_SIZE }}
+        />
+      ))}
       {eligibleIds.map((marbleId) => {
         const marble = state.marbles.find((m) => m.id === marbleId);
         const point = marble && marblePoint(state, marble, trackLength, geo);

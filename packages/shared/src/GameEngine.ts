@@ -220,11 +220,17 @@ export function planMovement(state: GameState, marble: Marble, steps: number): M
   const newLapPos = lapPos + steps;
 
   if (newLapPos > trackLength) {
-    const stepsToStart = trackLength - lapPos;
     const homeSlot = newLapPos - trackLength - 1;
-    const legal = homeSlot < HOME_STRETCH_LENGTH;
-    const trackPassed = pathIndices(marble.location.index, stepsToStart, trackLength);
-    return { location: legal ? { zone: 'home', index: homeSlot } : marble.location, trackPassed, legal };
+    if (homeSlot < HOME_STRETCH_LENGTH) {
+      const stepsToStart = trackLength - lapPos;
+      const trackPassed = pathIndices(marble.location.index, stepsToStart, trackLength);
+      return { location: { zone: 'home', index: homeSlot }, trackPassed, legal: true };
+    }
+    // Overshoots the home stretch (e.g. 3 marbles already home, only the 4th home slot
+    // open, but this card's value would carry past it) - house rule: this is NOT illegal,
+    // the marble just keeps walking the main track past its own start square instead of
+    // being forced to wait for a card that lines up exactly. Plain wraparound, same math as
+    // the "far from home" branch below, just reached via the overshoot path instead.
   }
 
   const trackPassed = pathIndices(marble.location.index, steps, trackLength);

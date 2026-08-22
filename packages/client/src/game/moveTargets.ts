@@ -1,7 +1,8 @@
-import { planMovement, startIndexFor, trackLengthFor } from '@crazypixel/shared';
+import { applyMove, planMovement, startIndexFor, trackLengthFor } from '@crazypixel/shared';
 import type { GameState, Marble, Move } from '@crazypixel/shared';
 import { trackPoint, kennelSlotPoint, homeSlotPoint } from './boardLayout';
 import type { BoardGeometry, Point } from './boardLayout';
+import { planCaptures } from './animationPlan';
 
 export interface MoveTarget {
   move: Move;
@@ -13,6 +14,32 @@ export interface MoveTarget {
    * empty for moves that aren't a track walk (start, swap, force-draw). Includes the
    * home-stretch slot as the final point when the move enters home. */
   path: Point[];
+  /** Current board positions of any marbles (opponent or teammate, either) this move would
+   * send to kennel - a "you're about to eliminate this piece" preview, see
+   * capturedPointsFor. */
+  capturedPoints: Point[];
+}
+
+/** Where a move's captured marbles currently sit, so the UI can preview "this is about to
+ * die" before the player commits - landing capture, the 7's pass-over capture, and a start-
+ * square capture (see GameEngine.ts) all "just happen" the same way here as they do for
+ * real, since this simulates the actual move (clone + applyMove) and diffs the result
+ * (planCaptures) rather than re-deriving each capture rule a second time. Marbles are
+ * always on the track at the moment they're captured (home-stretch entry never captures,
+ * kennel can't be landed on) - trackPoint covers every case in practice, but the zone
+ * checks stay defensive rather than assuming it. */
+export function capturedPointsFor(state: GameState, move: Move, geo: BoardGeometry): Point[] {
+  const trial = structuredClone(state);
+  applyMove(trial, state.currentPlayer, move);
+  const capturedIds = new Set(planCaptures(state, trial));
+  if (capturedIds.size === 0) return [];
+  return state.marbles
+    .filter((m) => capturedIds.has(m.id))
+    .map((m) => {
+      if (m.location.zone === 'track') return trackPoint(m.location.index, trackLengthFor(state.config), geo);
+      if (m.location.zone === 'kennel') return kennelSlotPoint(state.config, m.owner, m.location.index, geo);
+      return homeSlotPoint(state.config, m.owner, m.location.index, geo);
+    });
 }
 
 interface Resolved {
@@ -88,8 +115,11 @@ export function resolveMoveTargets(state: GameState, moves: Move[], geo: BoardGe
   const unresolved: Move[] = [];
   for (const move of moves) {
     const resolved = resolveOne(state, move, geo);
-    if (resolved) targets.push({ move, point: resolved.point, path: resolved.path });
-    else unresolved.push(move);
+    if (resolved) {
+      targets.push({ move, point: resolved.point, path: resolved.path, capturedPoints: capturedPointsFor(state, move, geo) });
+    } else {
+      unresolved.push(move);
+    }
   }
   return { targets, unresolved };
 }

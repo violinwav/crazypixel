@@ -288,6 +288,10 @@ body {
    label itself lives outside the board now, right above the hand panel (see .turn-label). */
 .board-status__pass {
   position: absolute;
+  /* Pure CSS centering, not a JS-computed left/top - see BoardStatus.tsx's own comment on
+     why. -56px matches computeBoardGeometry's own center offset (board title clearance). */
+  top: calc(50% - 56px);
+  left: 50%;
   transform: translate(-50%, -50%);
   font-size: 0.8rem;
   padding: 0.5em 1em;
@@ -296,6 +300,7 @@ body {
   text-align: center;
   line-height: 1.3;
   pointer-events: auto;
+  touch-action: manipulation;
   z-index: 10;
 }
 
@@ -390,6 +395,25 @@ body {
 .board-overlay__target:focus-visible::before {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
+}
+
+/* Foreseen-capture warning ring (see moveTargets.ts's capturedPointsFor) - a marble that
+   would be sent to kennel if the target/allocation it's attached to is chosen. Purely
+   informational (the move's own target button is the actual click target), so no pointer
+   events and no separate focus/hover state of its own. */
+.board-overlay__danger {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.board-overlay__danger::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  border: 3px solid var(--player-red);
+  animation: board-figure-pulse 1.4s ease-in-out infinite;
 }
 
 @keyframes board-target-pulse {

@@ -270,7 +270,7 @@ function FigureThenMoves({ state, moves, geo, player, onPlay, onCardLeavingHand 
   const { targets, unresolved: innerUnresolved } = resolveMoveTargets(state, selected.moves, geo);
   return (
     <div className="board-overlay">
-      {targets.map(({ move, point, path }, i) => (
+      {targets.map(({ move, point, path, capturedPoints }, i) => (
         <div key={i}>
           {path.slice(0, -1).map((p, j) => (
             <div
@@ -279,11 +279,18 @@ function FigureThenMoves({ state, moves, geo, player, onPlay, onCardLeavingHand 
               style={{ left: p.x - PATH_DOT_SIZE / 2, top: p.y - PATH_DOT_SIZE / 2, width: PATH_DOT_SIZE, height: PATH_DOT_SIZE }}
             />
           ))}
+          {capturedPoints.map((p, j) => (
+            <div
+              key={`danger-${j}`}
+              className="board-overlay__danger"
+              style={{ left: p.x - TARGET_SIZE / 2, top: p.y - TARGET_SIZE / 2, width: TARGET_SIZE, height: TARGET_SIZE }}
+            />
+          ))}
           <button
             type="button"
             className="board-overlay__target"
             style={{ left: point.x - TARGET_SIZE / 2, top: point.y - TARGET_SIZE / 2, width: TARGET_SIZE, height: TARGET_SIZE }}
-            aria-label={describeMove(move, state)}
+            aria-label={`${describeMove(move, state)}${capturedPoints.length > 0 ? ' - captures a marble' : ''}`}
             onClick={() => onPlay(player, move)}
           />
         </div>

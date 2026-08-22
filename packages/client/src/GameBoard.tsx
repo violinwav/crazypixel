@@ -201,7 +201,7 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
             onCardLeavingHand={handleCardLeavingHand}
           />
         )}
-        {isMyTurn && <BoardStatus state={state} containerSize={containerSize} onPassHand={passCurrentHand} mySeat={mySeat} />}
+        {isMyTurn && <BoardStatus state={state} onPassHand={passCurrentHand} />}
       </div>
       {/* Board state changes are driven from here, not narrated by the canvas itself - the
           canvas has no way to expose that to assistive tech, this text does. */}
