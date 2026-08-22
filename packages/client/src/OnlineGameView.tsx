@@ -7,9 +7,7 @@ interface Props {
 }
 
 export function OnlineGameView({ session }: Props) {
-  const {
-    state, play, passCurrentHand, lastPlanRef, turnDeadline, stealPreview, sendStealProgress,
-  } = useOnlineGameState(session.room);
+  const { state, play, passCurrentHand, lastPlanRef, turnDeadline } = useOnlineGameState(session.room);
   return (
     <GameBoard
       state={state}
@@ -19,8 +17,6 @@ export function OnlineGameView({ session }: Props) {
       mySeat={session.mySeat}
       colors={session.colors}
       turnDeadline={turnDeadline}
-      stealPreview={stealPreview}
-      onStealProgress={sendStealProgress}
     />
   );
 }

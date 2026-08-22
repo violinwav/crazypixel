@@ -259,15 +259,6 @@ body {
   opacity: 0.35;
 }
 
-/* An opponent's steal-in-progress has picked this exact card (see HandPanel.tsx's
-   highlightedCardId / GameBoard.tsx's stealPreview) - the "which card has been chosen"
-   preview, before the real move has even committed. */
-.playing-card--threatened {
-  outline: 3px solid var(--player-red);
-  outline-offset: 3px;
-  animation: board-figure-pulse 1s ease-in-out infinite;
-}
-
 .playing-card:focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
@@ -325,6 +316,20 @@ body {
   pointer-events: auto;
   touch-action: manipulation;
   z-index: 10;
+}
+
+/* .cp-button:active's own transform (see line ~96) has higher specificity (class+pseudo-
+   class vs. this rule's single class) than this button's own centering transform above, and
+   CSS transform doesn't compose across separate rules - without this override,
+   :active REPLACED translate(-50%, -50%) with translate(3px, 3px) the instant the button
+   was pressed, i.e. the button visually jumped by roughly half its own size at the exact
+   moment of tapping it (confirmed via specificity, not a guess) - the actual mechanism
+   behind "moves when I press it, needs multiple taps." Same specificity as .cp-button:active
+   (one class + :active each) so source order (this comes later in the file) is what makes
+   this win the tie - composes the same 3px press-feedback via calc() instead of losing the
+   centering entirely. */
+.board-status__pass:active {
+  transform: translate(calc(-50% + 3px), calc(-50% + 3px));
 }
 
 /* Thin countdown strip over the hand panel's top edge (see TurnTimerBar.tsx) - online only,
@@ -411,6 +416,17 @@ body {
   border-radius: 50%;
   border: 3px solid var(--player-red);
   animation: board-figure-pulse 1.4s ease-in-out infinite;
+}
+
+/* A landing capture puts the captured marble at the exact same point as the move's own
+   destination - the .board-overlay__danger ring above would sit directly underneath this
+   button's own ::before ring and never actually be seen (confirmed: same coordinates, this
+   one paints later in DOM order). Tinting the target button's own ring red instead is what
+   actually reads as "this kills something" for that (most common) case - .board-overlay__
+   danger still covers the other case, a captured marble at a DIFFERENT square than the
+   destination (the 7's pass-over capture, a start-square capture). */
+.board-overlay__target--danger::before {
+  border-color: var(--player-red);
 }
 
 @keyframes board-target-pulse {

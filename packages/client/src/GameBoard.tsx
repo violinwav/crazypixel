@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { trackLengthFor } from '@crazypixel/shared';
-import type { Card, GameState, Move, PlayerId } from '@crazypixel/shared';
+import type { GameState, Move, PlayerId } from '@crazypixel/shared';
 import { createPhaserGame } from './game/PhaserGame';
 import type { PhaserBridge } from './game/PhaserGame';
 import type { TurnAnimation } from './game/animationPlan';
@@ -9,8 +9,6 @@ import { computeBoardGeometry, discardPileCenter, drawPileCenter } from './game/
 import { HandPanel } from './HandPanel';
 import { HandBackground } from './HandBackground';
 import { BoardOverlay } from './BoardOverlay';
-import type { StealProgressInfo } from './BoardOverlay';
-import type { StealPreview } from './game/useOnlineGameState';
 import { BoardStatus } from './BoardStatus';
 import { OpponentHandCounts } from './OpponentHandCounts';
 import { TurnTimerBar } from './TurnTimerBar';
@@ -33,19 +31,9 @@ interface Props {
    * useOnlineGameState.ts). undefined for local hotseat, which has no server to enforce a
    * timeout and so shows no timer at all. */
   turnDeadline?: number;
-  /** Relays a steal-in-progress to the server - online only, undefined for local hotseat
-   * (there's no one else's screen to relay it to). See BoardOverlay.tsx's StealProgressInfo
-   * and useOnlineGameState.ts's sendStealProgress. */
-  onStealProgress?: (info: StealProgressInfo) => void;
-  /** A steal targeting/picking mySeat, relayed by someone else's client - online only,
-   * always undefined for local hotseat and for online games where no steal targeting this
-   * seat is currently in flight. See useOnlineGameState.ts's stealPreview. */
-  stealPreview?: StealPreview | null;
 }
 
-export function GameBoard({
-  state, play, passCurrentHand, restart, lastPlanRef, mySeat, colors, turnDeadline, onStealProgress, stealPreview,
-}: Props) {
+export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, mySeat, colors, turnDeadline }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const handPanelRef = useRef<HTMLDivElement>(null);
   const bridgeRef = useRef<PhaserBridge | null>(null);
@@ -55,11 +43,6 @@ export function GameBoard({
   const [stolenFlight, setStolenFlight] = useState<FlightPlan | null>(null);
   const [dealPlan, setDealPlan] = useState<DealPlan | null>(null);
   const dealtRoundRef = useRef<number | null>(null);
-  // Set by onCardLeavingHand the moment the player commits to a steal target (tapping the
-  // opponent's kennel), before StealCardOverlay's own reveal flight runs - handlePlay checks
-  // this so it doesn't start a second, overlapping fly-to-discard animation for the same
-  // card once the actual move commits a few taps later.
-  const pendingFlightCardIdRef = useRef<string | null>(null);
   // Previous state, kept purely to detect "one of MY cards just vanished because someone
   // ELSE'S move took it" (a steal) - see the effect below. Not used for anything else;
   // GameBoard doesn't otherwise need history.
@@ -128,42 +111,22 @@ export function GameBoard({
 
   const selectedCard = state.hands[state.currentPlayer].find((c) => c.id === selectedCardId) ?? null;
 
-  const startCardFlight = (card: Card) => {
-    const cardEl = document.querySelector<HTMLElement>(`[data-card-id="${card.id}"]`);
-    const containerEl = containerRef.current;
-    if (!cardEl || !containerEl || containerSize.width === 0) return;
-    const fromRect = cardEl.getBoundingClientRect();
-    const containerRect = containerEl.getBoundingClientRect();
-    const geo = computeBoardGeometry(
-      containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
-    );
-    const dest = discardPileCenter(geo);
-    setFlight({
-      card,
-      from: { x: fromRect.left, y: fromRect.top, width: fromRect.width, height: fromRect.height },
-      to: { x: containerRect.left + dest.x, y: containerRect.top + dest.y },
-    });
-  };
-
-  // See BoardOverlay.tsx's StealProgressInfo: fires twice during a steal (targeting, then
-  // position-pick). The local fly-to-discard animation only starts on the first call (card
-  // ahead of the actual move being chosen, so it visually leaves the moment the player
-  // commits to a target rather than after the whole steal-reveal sequence plays out); both
-  // calls relay to the server when online (onStealProgress is undefined for local hotseat -
-  // nothing to relay to).
-  const handleStealProgress = (info: StealProgressInfo) => {
-    if (info.cardIndex === null) {
-      pendingFlightCardIdRef.current = info.card.id;
-      startCardFlight(info.card);
-    }
-    onStealProgress?.(info);
-  };
-
   const handlePlay = (player: PlayerId, move: Move) => {
-    if (pendingFlightCardIdRef.current !== move.card.id) {
-      startCardFlight(move.card);
+    const cardEl = document.querySelector<HTMLElement>(`[data-card-id="${move.card.id}"]`);
+    const containerEl = containerRef.current;
+    if (cardEl && containerEl && containerSize.width > 0) {
+      const fromRect = cardEl.getBoundingClientRect();
+      const containerRect = containerEl.getBoundingClientRect();
+      const geo = computeBoardGeometry(
+        containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
+      );
+      const dest = discardPileCenter(geo);
+      setFlight({
+        card: move.card,
+        from: { x: fromRect.left, y: fromRect.top, width: fromRect.width, height: fromRect.height },
+        to: { x: containerRect.left + dest.x, y: containerRect.top + dest.y },
+      });
     }
-    pendingFlightCardIdRef.current = null;
     play(player, move);
   };
 
@@ -171,7 +134,10 @@ export function GameBoard({
   // an opponent's steal (forceDraw) targeting me (see GameEngine.ts's applyMove: every other
   // move kind either doesn't touch hands or only removes the ACTING player's own card).
   // prev.currentPlayer !== mySeat is what distinguishes this from my own ordinary play,
-  // which already gets its fly-to-discard animation from handlePlay above.
+  // which already gets its fly-to-discard animation from handlePlay above. Deliberately the
+  // *only* signal either side gets that a steal happened - no advance warning, no preview
+  // while the thief is still picking, both card placement and this reverse animation fire
+  // together only once the real move has actually landed.
   useEffect(() => {
     const prev = prevStateRef.current;
     prevStateRef.current = state;
@@ -200,42 +166,6 @@ export function GameBoard({
     });
   }, [state, mySeat, containerSize]);
 
-  const [previewFlight, setPreviewFlight] = useState<FlightPlan | null>(null);
-
-  // Someone else's steal is targeting me - live preview of the thief's own commit, relayed
-  // by the server before the real move ever applies (see useOnlineGameState.ts's
-  // stealPreview - purely cosmetic, never authoritative). Fires once per phase (targeting,
-  // then position-pick), since a new stealPreview object arrives for each - see
-  // BoardOverlay.tsx's StealProgressInfo. StrictMode double-invoking this is harmless (same
-  // input, same animation state), unlike the effects above that call a real onPlay-like
-  // side effect.
-  useEffect(() => {
-    if (!stealPreview || stealPreview.targetPlayer !== mySeat || stealPreview.cardIndex !== null) return;
-    const containerEl = containerRef.current;
-    if (!containerEl || containerSize.width === 0) return;
-    const containerRect = containerEl.getBoundingClientRect();
-    const geo = computeBoardGeometry(
-      containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
-    );
-    const dest = discardPileCenter(geo);
-    // The thief's real hand position isn't meaningful on this screen - the board's own
-    // center stands in as "arriving from elsewhere," landing on the (shared, unrotated)
-    // discard pile same as it does on the thief's own screen - "place 2" as soon as they
-    // commit to a target, mirrored here live.
-    setPreviewFlight({
-      card: stealPreview.card,
-      from: { x: containerRect.left + geo.center.x, y: containerRect.top + geo.center.y, width: 0, height: 0 },
-      to: { x: containerRect.left + dest.x, y: containerRect.top + dest.y },
-    });
-  }, [stealPreview, mySeat, containerSize, state.config]);
-
-  // The specific card a steal-in-progress has picked, once a position has actually been
-  // tapped (see StealCardOverlay.tsx) - highlighted on my own (already-visible) hand, well
-  // before the real move commits.
-  const highlightedCardId = stealPreview && stealPreview.targetPlayer === mySeat && stealPreview.cardIndex !== null
-    ? (state.hands[mySeat][stealPreview.cardIndex]?.id ?? null)
-    : null;
-
   return (
     <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <h1 className="visually-hidden">CrazyPixel</h1>
@@ -247,14 +177,7 @@ export function GameBoard({
       >
         <OpponentHandCounts state={state} containerSize={containerSize} mySeat={mySeat} />
         {isMyTurn && (
-          <BoardOverlay
-            state={state}
-            selectedCard={selectedCard}
-            containerSize={containerSize}
-            onPlay={handlePlay}
-            mySeat={mySeat}
-            onStealProgress={handleStealProgress}
-          />
+          <BoardOverlay state={state} selectedCard={selectedCard} containerSize={containerSize} onPlay={handlePlay} mySeat={mySeat} />
         )}
         {isMyTurn && <BoardStatus state={state} onPassHand={passCurrentHand} />}
       </div>
@@ -272,12 +195,10 @@ export function GameBoard({
           interactive={isMyTurn}
           selectedCardId={selectedCardId}
           onSelectCard={setSelectedCardId}
-          highlightedCardId={highlightedCardId}
         />
       </div>
       {flight && <FlyingCard plan={flight} onDone={() => setFlight(null)} />}
       {stolenFlight && <FlyingCard plan={stolenFlight} onDone={() => setStolenFlight(null)} />}
-      {previewFlight && <FlyingCard plan={previewFlight} onDone={() => setPreviewFlight(null)} />}
       {dealPlan && <DealAnimation plan={dealPlan} onDone={() => setDealPlan(null)} />}
       <WinScreen state={state} colors={colors} onPlayAgain={restart} />
     </main>
