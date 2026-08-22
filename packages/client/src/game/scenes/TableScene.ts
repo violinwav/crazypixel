@@ -7,7 +7,7 @@ import {
   trackPoint, kennelSlotPoint, homeSlotPoint, drawPileCenter, discardPileCenter, computeBoardGeometry,
 } from '../boardLayout';
 import type { BoardGeometry } from '../boardLayout';
-import { PALETTE } from '../theme';
+import { PALETTE, hexToCss } from '../theme';
 import { CARD_FACE_SPRITE } from '../cardArt';
 import { EMPTY_TURN_ANIMATION } from '../animationPlan';
 import type { CardDrawAnimation, MarbleAnimation, TurnAnimation } from '../animationPlan';
@@ -68,7 +68,10 @@ export class TableScene extends Phaser.Scene {
   private currentPlayerMarkers: Phaser.GameObjects.Rectangle[] = [];
   private decorLayer?: Phaser.GameObjects.Container;
   private marbleLayer?: Phaser.GameObjects.Container;
-  private titleText?: Phaser.GameObjects.Text;
+  /** Shows "PLAYER N'S TURN" in that player's own color - was a static "CRAZYPIXEL" title,
+   * replaced per feedback (the DOM TurnLabel that used to live over the hand panel is gone
+   * too - this is the only turn indicator now). */
+  private turnText?: Phaser.GameObjects.Text;
   private geo: BoardGeometry = {
     center: { x: 0, y: 0 }, trackRadius: 0, kennelRadius: 0, homeRadiusOuter: 0, homeRadiusStep: 0, stackOffset: 0, stackCenter: { x: 0, y: 0 }, rotation: 0,
   };
@@ -105,8 +108,8 @@ export class TableScene extends Phaser.Scene {
   }
 
   create() {
-    this.titleText = this.add
-      .text(0, 36, 'CRAZYPIXEL', { fontFamily: '"Press Start 2P"', fontSize: '20px', color: '#ffffff' })
+    this.turnText = this.add
+      .text(0, 36, '', { fontFamily: '"Press Start 2P"', fontSize: '14px', color: '#ffffff' })
       .setOrigin(0.5);
     this.boardLayer = this.add.container(0, 0);
     // One small square per kennel slot (not inside decorLayer, which wipes and redraws every
@@ -220,7 +223,9 @@ export class TableScene extends Phaser.Scene {
     // call, and doesn't change again after that for a given TableScene instance (each game
     // gets its own), so recomputing every render is just cheap redundancy, not a bug.
     this.geo = computeBoardGeometry(width, height, trackLengthFor(this.state.config), this.viewerSeat, this.state.config.playerCount);
-    this.titleText?.setPosition(this.geo.center.x, 36);
+    this.turnText?.setPosition(this.geo.center.x, 36);
+    this.turnText?.setText(`PLAYER ${this.state.currentPlayer + 1}'S TURN`);
+    this.turnText?.setColor(hexToCss(PALETTE.players[this.colorAssignment[this.state.currentPlayer]]));
     // Cheap enough to redraw every render (a turn-based game, not a twitch one) - simpler
     // than tracking whether state.config actually changed since the last call.
     this.redrawBoard();

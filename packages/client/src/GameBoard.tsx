@@ -7,11 +7,12 @@ import type { PhaserBridge } from './game/PhaserGame';
 import type { TurnAnimation } from './game/animationPlan';
 import { computeBoardGeometry, discardPileCenter, drawPileCenter } from './game/boardLayout';
 import { HandPanel } from './HandPanel';
+import { HandBackground } from './HandBackground';
 import { BoardOverlay } from './BoardOverlay';
 import { BoardStatus } from './BoardStatus';
 import { OpponentHandCounts } from './OpponentHandCounts';
-import { TurnLabel } from './TurnLabel';
 import { TurnTimerBar } from './TurnTimerBar';
+import { PALETTE, hexToRgbString } from './game/theme';
 import { FlyingCard } from './FlyingCard';
 import type { FlightPlan } from './FlyingCard';
 import { DealAnimation } from './DealAnimation';
@@ -209,7 +210,7 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
         {lastMoveAnnouncement} {turnAnnouncement}
       </p>
       <div ref={handPanelRef} className="hand-panel-slot" style={{ opacity: dealPlan ? 0 : 1 }}>
-        <TurnLabel player={state.currentPlayer} />
+        <HandBackground active={isMyTurn} color={hexToRgbString(PALETTE.players[colors[state.currentPlayer]])} />
         {turnDeadline !== undefined && <TurnTimerBar deadline={turnDeadline} />}
         <HandPanel
           state={state}

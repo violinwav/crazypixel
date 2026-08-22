@@ -139,9 +139,23 @@ body {
      of that 250ms - confirmed live, read as the hand disappearing for a beat). Now that the
      deal animation's cards land at the exact same position/size the real hand renders at
      (see DealAnimation.tsx), a hard cut lines up seamlessly - nothing to crossfade. */
-  /* Positioning context for .turn-label/.turn-timer below - both overlay the top edge of
-     this slot ("on top of the cards") rather than sitting in normal flow above it. */
+  /* Positioning context for .hand-panel__background and .turn-timer below - both overlay
+     this slot rather than sitting in normal flow. */
   position: relative;
+}
+
+/* Behind the cards (see HandBackground.tsx) - the current player's own pixel-dither while
+   it's their turn to act, tinted per-player via PixelDither's color prop (varies per
+   render, so it's passed as a prop, not a fixed CSS var), plain black otherwise. DOM order
+   (not z-index) is what keeps this under .hand-panel__cards below - it renders first. */
+.hand-panel__background {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hand-panel__background--black {
+  background: var(--bg-deep);
 }
 
 .hand-panel__cards {
@@ -304,39 +318,13 @@ body {
   z-index: 10;
 }
 
-/* Overlays the top edge of the hand panel (see .hand-panel-slot's position:relative) rather
-   than sitting in normal flow above it - "more on top of the cards" per feedback. Needs its
-   own outline (not just --ink-dim) since it now sits over unpredictable card art instead of
-   the plain PixelDither background. Crossfades on change instead of snapping. */
-.turn-label {
-  position: absolute;
-  top: 2px;
-  left: 0;
-  right: 0;
-  z-index: 5;
-  pointer-events: none;
-  margin: 0;
-  padding: 0;
-  text-align: center;
-  font-family: var(--cp-font-display);
-  font-size: 10px;
-  letter-spacing: 1px;
-  color: var(--ink);
-  text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
-  opacity: 0;
-  transition: opacity 220ms ease;
-}
-
-.turn-label--visible {
-  opacity: 1;
-}
-
-/* Thin countdown strip sitting just below .turn-label, still over the hand panel's top edge
-   (see TurnTimerBar.tsx) - online only, server-enforced, this is cosmetic warning only.
-   "Reversed" loading bar: starts full and shrinks as time runs out, not the other way. */
+/* Thin countdown strip over the hand panel's top edge (see TurnTimerBar.tsx) - online only,
+   server-enforced, this is cosmetic warning only. "Reversed" loading bar: starts full and
+   shrinks as time runs out, not the other way. The turn indicator itself moved to the board
+   (see TableScene.ts's turnText) - not duplicated here anymore. */
 .turn-timer {
   position: absolute;
-  top: 16px;
+  top: 6px;
   left: 8px;
   right: 8px;
   z-index: 5;

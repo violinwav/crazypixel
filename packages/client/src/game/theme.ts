@@ -12,3 +12,15 @@ export const PALETTE = {
   players: [0xff5470, 0x3fb0ff, 0xffe66d, 0x38e58f, 0xb967ff, 0xff9f40] as const,
   cardRed: 0xd22c50,
 };
+
+/** Phaser text/DOM CSS want a "#rrggbb" string - Phaser.Display.Color exists for this, but a
+ * one-line format doesn't need pulling in a whole Color object for it. */
+export function hexToCss(hex: number): string {
+  return `#${hex.toString(16).padStart(6, '0')}`;
+}
+
+/** PixelDither's rgba() template wants "r, g, b" (see its own COLOR constant) - used to tint
+ * it per-player instead of the fixed white it was built with. */
+export function hexToRgbString(hex: number): string {
+  return `${(hex >> 16) & 0xff}, ${(hex >> 8) & 0xff}, ${hex & 0xff}`;
+}
