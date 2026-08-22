@@ -2,13 +2,10 @@ import { useEffect, useRef } from 'react';
 
 interface Props {
   className?: string;
-  /** "r, g, b" (see game/theme.ts's hexToRgbString) - defaults to the original white the
-   * page-background usage (App.tsx) was tuned at. */
-  color?: string;
 }
 
 const CELL = 12; // CSS px per grid cell - chunky on purpose, this is a pixel-art background
-const DEFAULT_COLOR = '255, 255, 255';
+const COLOR = '255, 255, 255';
 const BASE_ALPHA = 0.04;
 const ON_ALPHA = 0.22;
 const SPEED = 0.35;
@@ -36,7 +33,7 @@ function valueAt(cx: number, cy: number, t: number): number {
  * frame synchronously on mount (not just scheduled via requestAnimationFrame) so there's
  * never a blank moment waiting on an animation frame that a backgrounded/unfocused tab
  * might delay - the exact failure mode the WebGL version turned out to have. */
-export function PixelDither({ className, color = DEFAULT_COLOR }: Props) {
+export function PixelDither({ className }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -66,7 +63,7 @@ export function PixelDither({ className, color = DEFAULT_COLOR }: Props) {
           const v = valueAt(cx, cy, time);
           const threshold = BAYER[cy % 4][cx % 4] / 16;
           const on = v > threshold;
-          ctx.fillStyle = `rgba(${color}, ${on ? ON_ALPHA : BASE_ALPHA})`;
+          ctx.fillStyle = `rgba(${COLOR}, ${on ? ON_ALPHA : BASE_ALPHA})`;
           ctx.fillRect(cx * CELL, cy * CELL, CELL - 1, CELL - 1);
         }
       }
@@ -97,11 +94,7 @@ export function PixelDither({ className, color = DEFAULT_COLOR }: Props) {
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-    // Restarts the whole animation/resize setup on a color change (turn changes, see
-    // GameBoard.tsx) - infrequent enough (once per turn, not per frame) that resetting the
-    // dither's own animation phase alongside it is an acceptable trade for not needing a
-    // second ref-based "read the latest color without restarting" path.
-  }, [color]);
+  }, []);
 
   return <canvas ref={canvasRef} className={className} aria-hidden="true" />;
 }

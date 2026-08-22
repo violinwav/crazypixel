@@ -12,7 +12,7 @@ import { BoardOverlay } from './BoardOverlay';
 import { BoardStatus } from './BoardStatus';
 import { OpponentHandCounts } from './OpponentHandCounts';
 import { TurnTimerBar } from './TurnTimerBar';
-import { PALETTE, hexToRgbString } from './game/theme';
+import { PALETTE, hexToCss } from './game/theme';
 import { FlyingCard } from './FlyingCard';
 import type { FlightPlan } from './FlyingCard';
 import { DealAnimation } from './DealAnimation';
@@ -187,7 +187,7 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
         {lastMoveAnnouncement} {turnAnnouncement}
       </p>
       <div ref={handPanelRef} className="hand-panel-slot" style={{ opacity: dealPlan ? 0 : 1 }}>
-        <HandBackground active={isMyTurn} color={hexToRgbString(PALETTE.players[colors[state.currentPlayer]])} />
+        <HandBackground active={isMyTurn} colorHex={hexToCss(PALETTE.players[colors[state.currentPlayer]])} />
         {turnDeadline !== undefined && <TurnTimerBar deadline={turnDeadline} />}
         <HandPanel
           state={state}

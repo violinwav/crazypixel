@@ -18,9 +18,3 @@ export const PALETTE = {
 export function hexToCss(hex: number): string {
   return `#${hex.toString(16).padStart(6, '0')}`;
 }
-
-/** PixelDither's rgba() template wants "r, g, b" (see its own COLOR constant) - used to tint
- * it per-player instead of the fixed white it was built with. */
-export function hexToRgbString(hex: number): string {
-  return `${(hex >> 16) & 0xff}, ${(hex >> 8) & 0xff}, ${hex & 0xff}`;
-}
