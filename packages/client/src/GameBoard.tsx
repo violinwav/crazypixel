@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { trackLengthFor } from '@crazypixel/shared';
-import type { GameState, Move, PlayerId } from '@crazypixel/shared';
+import type { Card, GameState, Move, PlayerId } from '@crazypixel/shared';
 import { createPhaserGame } from './game/PhaserGame';
 import type { PhaserBridge } from './game/PhaserGame';
 import type { TurnAnimation } from './game/animationPlan';
@@ -39,8 +39,18 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [flight, setFlight] = useState<FlightPlan | null>(null);
+  const [stolenFlight, setStolenFlight] = useState<FlightPlan | null>(null);
   const [dealPlan, setDealPlan] = useState<DealPlan | null>(null);
   const dealtRoundRef = useRef<number | null>(null);
+  // Set by onCardLeavingHand the moment the player commits to a steal target (tapping the
+  // opponent's kennel), before StealCardOverlay's own reveal flight runs - handlePlay checks
+  // this so it doesn't start a second, overlapping fly-to-discard animation for the same
+  // card once the actual move commits a few taps later.
+  const pendingFlightCardIdRef = useRef<string | null>(null);
+  // Previous state, kept purely to detect "one of MY cards just vanished because someone
+  // ELSE'S move took it" (a steal) - see the effect below. Not used for anything else;
+  // GameBoard doesn't otherwise need history.
+  const prevStateRef = useRef<GameState | null>(null);
 
   const isMyTurn = mySeat === state.currentPlayer;
 
@@ -105,24 +115,71 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
 
   const selectedCard = state.hands[state.currentPlayer].find((c) => c.id === selectedCardId) ?? null;
 
-  const handlePlay = (player: PlayerId, move: Move) => {
-    const cardEl = document.querySelector<HTMLElement>(`[data-card-id="${move.card.id}"]`);
+  const startCardFlight = (card: Card) => {
+    const cardEl = document.querySelector<HTMLElement>(`[data-card-id="${card.id}"]`);
     const containerEl = containerRef.current;
-    if (cardEl && containerEl && containerSize.width > 0) {
-      const fromRect = cardEl.getBoundingClientRect();
-      const containerRect = containerEl.getBoundingClientRect();
-      const geo = computeBoardGeometry(
-        containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
-      );
-      const dest = discardPileCenter(geo);
-      setFlight({
-        card: move.card,
-        from: { x: fromRect.left, y: fromRect.top, width: fromRect.width, height: fromRect.height },
-        to: { x: containerRect.left + dest.x, y: containerRect.top + dest.y },
-      });
+    if (!cardEl || !containerEl || containerSize.width === 0) return;
+    const fromRect = cardEl.getBoundingClientRect();
+    const containerRect = containerEl.getBoundingClientRect();
+    const geo = computeBoardGeometry(
+      containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
+    );
+    const dest = discardPileCenter(geo);
+    setFlight({
+      card,
+      from: { x: fromRect.left, y: fromRect.top, width: fromRect.width, height: fromRect.height },
+      to: { x: containerRect.left + dest.x, y: containerRect.top + dest.y },
+    });
+  };
+
+  // See BoardOverlay.tsx's onCardLeavingHand: fires early for a steal, ahead of the actual
+  // move being chosen, so the card visually leaves the moment the player commits to a
+  // target rather than after the whole steal-reveal sequence plays out.
+  const handleCardLeavingHand = (card: Card) => {
+    pendingFlightCardIdRef.current = card.id;
+    startCardFlight(card);
+  };
+
+  const handlePlay = (player: PlayerId, move: Move) => {
+    if (pendingFlightCardIdRef.current !== move.card.id) {
+      startCardFlight(move.card);
     }
+    pendingFlightCardIdRef.current = null;
     play(player, move);
   };
+
+  // Detects "my hand just lost a card I didn't play myself" - the only way that happens is
+  // an opponent's steal (forceDraw) targeting me (see GameEngine.ts's applyMove: every other
+  // move kind either doesn't touch hands or only removes the ACTING player's own card).
+  // prev.currentPlayer !== mySeat is what distinguishes this from my own ordinary play,
+  // which already gets its fly-to-discard animation from handlePlay above.
+  useEffect(() => {
+    const prev = prevStateRef.current;
+    prevStateRef.current = state;
+    if (!prev || prev.currentPlayer === mySeat) return;
+    const prevHand = prev.hands[mySeat];
+    const nextIds = new Set(state.hands[mySeat].map((c) => c.id));
+    if (state.hands[mySeat].length >= prevHand.length) return;
+    const stolenCard = prevHand.find((c) => !nextIds.has(c.id));
+    if (!stolenCard) return;
+    const containerEl = containerRef.current;
+    const handEl = handPanelRef.current;
+    if (!containerEl || !handEl || containerSize.width === 0) return;
+    const handRect = handEl.getBoundingClientRect();
+    const containerRect = containerEl.getBoundingClientRect();
+    const geo = computeBoardGeometry(
+      containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
+    );
+    // The stolen card's own DOM position is long gone by the time this runs (state already
+    // updated) - the hand panel's own center stands in as "somewhere in my hand" instead,
+    // flying out toward the board's center ("taken away"), a reverse of the normal
+    // card-to-discard flight simultaneous with the thief's own animation on their screen.
+    setStolenFlight({
+      card: stolenCard,
+      from: { x: handRect.left + handRect.width / 2 - 40, y: handRect.top, width: 80, height: handRect.height },
+      to: { x: containerRect.left + geo.center.x, y: containerRect.top + geo.center.y },
+    });
+  }, [state, mySeat, containerSize]);
 
   return (
     <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -135,7 +192,14 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
       >
         <OpponentHandCounts state={state} containerSize={containerSize} mySeat={mySeat} />
         {isMyTurn && (
-          <BoardOverlay state={state} selectedCard={selectedCard} containerSize={containerSize} onPlay={handlePlay} mySeat={mySeat} />
+          <BoardOverlay
+            state={state}
+            selectedCard={selectedCard}
+            containerSize={containerSize}
+            onPlay={handlePlay}
+            mySeat={mySeat}
+            onCardLeavingHand={handleCardLeavingHand}
+          />
         )}
         {isMyTurn && <BoardStatus state={state} containerSize={containerSize} onPassHand={passCurrentHand} mySeat={mySeat} />}
       </div>
@@ -156,6 +220,7 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
         />
       </div>
       {flight && <FlyingCard plan={flight} onDone={() => setFlight(null)} />}
+      {stolenFlight && <FlyingCard plan={stolenFlight} onDone={() => setStolenFlight(null)} />}
       {dealPlan && <DealAnimation plan={dealPlan} onDone={() => setDealPlan(null)} />}
       <WinScreen state={state} colors={colors} onPlayAgain={restart} />
     </main>
