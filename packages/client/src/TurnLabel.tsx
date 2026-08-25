@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { playerLabel } from './game/playerName';
 
 interface Props {
   player: number;
+  playerNames?: string[];
 }
 
 /** Small label sitting right above the hand panel, not anchored to the board/stack anymore
@@ -9,7 +11,7 @@ interface Props {
  * snapping - fade out the old player, swap, fade in the new one - same "flip a flag after a
  * tick" timing technique as FlyingCard/DealAnimation (requestAnimationFrame is unreliable in
  * this environment). */
-export function TurnLabel({ player }: Props) {
+export function TurnLabel({ player, playerNames }: Props) {
   const [displayPlayer, setDisplayPlayer] = useState(player);
   const [visible, setVisible] = useState(true);
 
@@ -25,7 +27,7 @@ export function TurnLabel({ player }: Props) {
 
   return (
     <p className={`turn-label${visible ? ' turn-label--visible' : ''}`} aria-hidden="true">
-      PLAYER {displayPlayer + 1}&apos;S TURN
+      {playerLabel(playerNames, displayPlayer).toUpperCase()}&apos;S TURN
     </p>
   );
 }

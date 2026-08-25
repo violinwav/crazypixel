@@ -116,6 +116,18 @@ body {
   cursor: not-allowed;
 }
 
+/* Toggle buttons (aria-pressed set - player count, mode, etc.) need their own selected/
+   unselected look, since the base .cp-button rule above always renders filled - without
+   this every choice in a group looked identical regardless of which was actually picked. */
+.lobby__choice[aria-pressed='false'] {
+  background: var(--bg-raised);
+  color: var(--ink);
+}
+
+.lobby__choice[aria-pressed='true'] {
+  box-shadow: 4px 4px 0 var(--bg-deep), 0 0 0 3px var(--ink) inset;
+}
+
 .hand-panel {
   /* No fill at all - the pixel-dither background (App.tsx's PixelDither) shows straight
      through, same as everywhere else on screen, not a grey box sitting between it and the
@@ -808,29 +820,89 @@ canvas {
   color: var(--ink-dim);
 }
 
-.lobby__swatches {
+.lobby__seat--row {
+  flex-direction: row;
+  align-items: center;
+}
+
+.lobby__seat-swatch {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  border: 2px solid var(--bg-deep);
+  border-radius: 3px;
+}
+
+.color-slider {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.color-slider__row {
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
 
-.lobby__swatch {
-  width: var(--target-min-touch);
-  height: var(--target-min-touch);
-  min-width: var(--target-min-touch);
+.color-slider__label {
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+}
+
+.color-slider__swatch {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border: 2px solid var(--bg-deep);
+  border-radius: 4px;
+}
+
+/* A pastel hue-wheel gradient painted via the inline `background` style (see
+   ColorSlider.tsx) - -webkit-appearance/-moz-appearance strip the native track fill so
+   that gradient shows through instead of the browser's default track color. */
+.color-slider__input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 28px;
   min-height: var(--target-min-touch);
-  padding: 0;
   border: 3px solid var(--bg-deep);
   border-radius: 4px;
   cursor: pointer;
 }
 
-.lobby__swatch[aria-pressed='true'] {
-  border-color: var(--ink);
-  box-shadow: 0 0 0 2px var(--bg-deep), 0 0 0 4px var(--ink);
+.color-slider__input::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
 }
 
-.lobby__swatch:focus-visible {
+.color-slider__input::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.color-slider__input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 34px;
+  margin-top: -3px;
+  background: var(--ink);
+  border: 3px solid var(--bg-deep);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.color-slider__input::-moz-range-thumb {
+  width: 16px;
+  height: 34px;
+  background: var(--ink);
+  border: 3px solid var(--bg-deep);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.color-slider__input:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }

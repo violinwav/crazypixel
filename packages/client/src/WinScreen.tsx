@@ -1,14 +1,12 @@
 import type { GameState } from '@crazypixel/shared';
-import { PALETTE } from './game/theme';
+import { hueToCss } from './game/color';
+import { playerLabel } from './game/playerName';
 
 interface Props {
   state: GameState;
   colors: number[];
+  playerNames?: string[];
   onPlayAgain?: () => void;
-}
-
-function colorHex(colorIndex: number): string {
-  return `#${PALETTE.players[colorIndex].toString(16).padStart(6, '0')}`;
 }
 
 // Reload rather than a React-level "back to lobby" - GameView's Phaser instance is
@@ -20,7 +18,7 @@ function backToLobby() {
   window.location.reload();
 }
 
-export function WinScreen({ state, colors, onPlayAgain }: Props) {
+export function WinScreen({ state, colors, playerNames, onPlayAgain }: Props) {
   if (state.phase !== 'gameEnd' || !state.winners) return null;
   const isTeamWin = state.winners.length > 1;
 
@@ -33,8 +31,8 @@ export function WinScreen({ state, colors, onPlayAgain }: Props) {
         <div className="win-screen__players">
           {state.winners.map((player) => (
             <span key={player} className="win-screen__player">
-              <span className="win-screen__swatch" style={{ backgroundColor: colorHex(colors[player]) }} aria-hidden="true" />
-              Player {player + 1}
+              <span className="win-screen__swatch" style={{ backgroundColor: hueToCss(colors[player]) }} aria-hidden="true" />
+              {playerLabel(playerNames, player)}
             </span>
           ))}
         </div>

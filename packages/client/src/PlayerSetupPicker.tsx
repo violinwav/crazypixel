@@ -1,6 +1,6 @@
 import { partnerOf } from '@crazypixel/shared';
 import type { GameConfig, GameMode, PlayerId } from '@crazypixel/shared';
-import { PALETTE } from './game/theme';
+import { ColorSlider } from './ColorSlider';
 
 export interface PlayerSetup {
   config: GameConfig;
@@ -10,17 +10,26 @@ export interface PlayerSetup {
 interface Props {
   value: PlayerSetup;
   onChange: (setup: PlayerSetup) => void;
+  /** Which seat(s) this picker's Colors section lets you change. 'all' (default) is the
+   * local-hotseat case - one person sets every seat's color before play starts. A seat
+   * index is the online-host case - only the host's own seat exists pre-creation, everyone
+   * else picks their own color after joining (see OnlineLobby's WaitingRoom), so there's
+   * nothing for the host to set on their behalf here. */
+  colorSeats?: 'all' | number;
 }
 
 const PLAYER_COUNTS: GameConfig['playerCount'][] = [2, 4, 6];
-const COLOR_HEX = PALETTE.players.map((c) => `#${c.toString(16).padStart(6, '0')}`);
-const COLOR_NAMES = ['Red', 'Blue', 'Yellow', 'Green', 'Purple', 'Orange'];
 
+// Hues (0-359) spread evenly around the wheel, one seed per seat - a reasonable starting
+// point that keeps every seat visibly distinct before anyone touches a slider. Colors are
+// continuous now (see ColorSlider.tsx), so unlike the old fixed-6-palette version there's no
+// scarcity to defend - two seats landing on the same or a nearby hue after manual picks is
+// just the players' own choice, not a bug.
 export function defaultColors(count: number): number[] {
-  return Array.from({ length: count }, (_, i) => i);
+  return Array.from({ length: count }, (_, i) => Math.round((360 / count) * i));
 }
 
-export function PlayerSetupPicker({ value, onChange }: Props) {
+export function PlayerSetupPicker({ value, onChange, colorSeats = 'all' }: Props) {
   const { config, colors } = value;
   const { playerCount, mode } = config;
 
@@ -34,13 +43,9 @@ export function PlayerSetupPicker({ value, onChange }: Props) {
     onChange({ config: { ...config, mode: nextMode }, colors });
   };
 
-  const handleColorPick = (seat: number, colorIndex: number) => {
+  const handleColorPick = (seat: number, hue: number) => {
     const next = [...colors];
-    const conflictSeat = next.findIndex((c) => c === colorIndex);
-    if (conflictSeat !== -1 && conflictSeat !== seat) {
-      next[conflictSeat] = next[seat]; // swap, so two seats never share a color
-    }
-    next[seat] = colorIndex;
+    next[seat] = hue;
     onChange({ config, colors: next });
   };
 
@@ -55,7 +60,7 @@ export function PlayerSetupPicker({ value, onChange }: Props) {
             <button
               key={count}
               type="button"
-              className="cp-button"
+              className="cp-button lobby__choice"
               aria-pressed={playerCount === count}
               onClick={() => handlePlayerCount(count)}
             >
@@ -70,7 +75,7 @@ export function PlayerSetupPicker({ value, onChange }: Props) {
         <div role="group" aria-label="Game mode" className="lobby__choices">
           <button
             type="button"
-            className="cp-button"
+            className="cp-button lobby__choice"
             aria-pressed={mode === 'ffa'}
             onClick={() => handleMode('ffa')}
           >
@@ -78,7 +83,7 @@ export function PlayerSetupPicker({ value, onChange }: Props) {
           </button>
           <button
             type="button"
-            className="cp-button"
+            className="cp-button lobby__choice"
             aria-pressed={mode === 'teams'}
             disabled={playerCount === 2}
             onClick={() => handleMode('teams')}
@@ -96,29 +101,23 @@ export function PlayerSetupPicker({ value, onChange }: Props) {
       </section>
 
       <section className="cp-panel lobby__section">
-        <h2 className="lobby__heading">Colors</h2>
+        <h2 className="lobby__heading">{colorSeats === 'all' ? 'Colors' : 'Your Color'}</h2>
         <div className="lobby__seats">
-          {seats.map((seat) => {
-            const partner = mode === 'teams' ? partnerOf(config, seat as PlayerId) : null;
+          {(colorSeats === 'all' ? seats : [colorSeats]).map((seat) => {
+            const partner = colorSeats === 'all' && mode === 'teams' ? partnerOf(config, seat as PlayerId) : null;
             return (
-              <div key={seat} role="group" aria-label={`Player ${seat + 1} color`} className="lobby__seat">
-                <span className="lobby__seat-label">
-                  Player {seat + 1}
-                  {partner !== null && <span className="lobby__seat-partner"> · partners P{partner + 1}</span>}
-                </span>
-                <div className="lobby__swatches">
-                  {COLOR_HEX.map((hex, colorIndex) => (
-                    <button
-                      key={colorIndex}
-                      type="button"
-                      className="lobby__swatch"
-                      style={{ backgroundColor: hex }}
-                      aria-pressed={colors[seat] === colorIndex}
-                      aria-label={COLOR_NAMES[colorIndex]}
-                      onClick={() => handleColorPick(seat, colorIndex)}
-                    />
-                  ))}
-                </div>
+              <div key={seat} className="lobby__seat">
+                {colorSeats === 'all' && (
+                  <span className="lobby__seat-label">
+                    Player {seat + 1}
+                    {partner !== null && <span className="lobby__seat-partner"> · partners P{partner + 1}</span>}
+                  </span>
+                )}
+                <ColorSlider
+                  label={colorSeats === 'all' ? `Player ${seat + 1} color` : 'Color'}
+                  value={colors[seat]}
+                  onChange={(hue) => handleColorPick(seat, hue)}
+                />
               </div>
             );
           })}

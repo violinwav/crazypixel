@@ -39,21 +39,31 @@ export interface RoomState {
   mode: GameMode;
   colors: number[];
   seatSessionIds: string[];
+  playerNames: string[];
   stateJson: string;
   /** Epoch ms when the current turn auto-plays - see GameRoom.ts's scheduleTurnTimeout. */
   turnDeadline: number;
 }
 
-export function createRoom({ config, colors }: PlayerSetup): Promise<Room<RoomState>> {
+// Only the host's own seat (colors[0], see PlayerSetupPicker's colorSeats={0} usage in
+// OnlineLobby) is known pre-creation - every other seat picks its own color (a hue, 0-359)
+// after joining, via setSeatColor below, synced server-authoritatively like everything else
+// in this room.
+export function createRoom({ config, colors }: PlayerSetup, displayName: string): Promise<Room<RoomState>> {
   const client = new Client(SERVER_URL);
   return client.create<RoomState>('game', {
     playerCount: config.playerCount,
     mode: config.mode,
-    colors,
+    hostHue: colors[0],
+    displayName,
   });
 }
 
-export function joinRoom(code: string): Promise<Room<RoomState>> {
+export function joinRoom(code: string, displayName: string): Promise<Room<RoomState>> {
   const client = new Client(SERVER_URL);
-  return client.joinById<RoomState>(code.trim());
+  return client.joinById<RoomState>(code.trim(), { displayName });
+}
+
+export function setSeatColor(room: Room<RoomState>, hue: number): void {
+  room.send('setColor', { hue });
 }

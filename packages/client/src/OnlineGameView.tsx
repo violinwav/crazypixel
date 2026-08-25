@@ -16,6 +16,7 @@ export function OnlineGameView({ session }: Props) {
       lastPlanRef={lastPlanRef}
       mySeat={session.mySeat}
       colors={session.colors}
+      playerNames={session.playerNames}
       turnDeadline={turnDeadline}
     />
   );

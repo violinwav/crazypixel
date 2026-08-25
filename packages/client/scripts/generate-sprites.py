@@ -233,9 +233,15 @@ def make_marble(color, size=MARBLE_SIZE, corner_cut=MARBLE_CORNER_CUT):
 
 
 def generate_marbles():
-    # Native 20x20 export - Phaser's nearest-neighbor scaling enlarges at render time.
-    for i, color in enumerate(PALETTE["players"]):
-        make_marble(color).save(os.path.join(OUT_DIR, f"marble-p{i}.png"))
+    # One neutral-grey marble, tinted per player at runtime (Phaser's setTint, see
+    # TableScene.ts) instead of one baked PNG per player color - player color is now a
+    # continuous hue picked on a slider (see ColorSlider.tsx), not a pick from a fixed
+    # palette, so baking a PNG per color isn't an option anymore. Mid-grey (not white) so the
+    # facet's shade(color, 1.4) highlight stays visibly brighter than the base fill after
+    # tint's multiply blend - tinting a white base would multiply every non-border pixel back
+    # to the tint color uniformly, losing the highlight entirely.
+    neutral = (0xA8, 0xA8, 0xA8)
+    make_marble(neutral).save(os.path.join(OUT_DIR, "marble-base.png"))
     print("marbles: ok")
 
 

@@ -1,11 +1,13 @@
 import { activePlayerIds, KENNEL_SIZE, trackLengthFor } from '@crazypixel/shared';
 import type { GameState, PlayerId } from '@crazypixel/shared';
 import { computeBoardGeometry, kennelSlotPoint } from './game/boardLayout';
+import { playerLabel } from './game/playerName';
 
 interface Props {
   state: GameState;
   containerSize: { width: number; height: number };
   mySeat: PlayerId;
+  playerNames?: string[];
 }
 
 /** A small badge over each opponent's kennel cluster showing how many cards they're
@@ -14,7 +16,7 @@ interface Props {
  * is - useful context regardless. Positioned via the same rotation-aware geometry as
  * everything else on the board (see boardLayout.ts's BoardGeometry.rotation), so a badge
  * tracks its player's kennel correctly no matter which seat is the viewer. */
-export function OpponentHandCounts({ state, containerSize, mySeat }: Props) {
+export function OpponentHandCounts({ state, containerSize, mySeat, playerNames }: Props) {
   if (containerSize.width === 0) return null;
   const geo = computeBoardGeometry(
     containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
@@ -31,7 +33,7 @@ export function OpponentHandCounts({ state, containerSize, mySeat }: Props) {
             key={p}
             className="opponent-hand-counts__badge"
             style={{ left: x, top: y }}
-            aria-label={`Player ${p + 1} has ${count} card${count === 1 ? '' : 's'}`}
+            aria-label={`${playerLabel(playerNames, p)} has ${count} card${count === 1 ? '' : 's'}`}
           >
             {count}
           </span>

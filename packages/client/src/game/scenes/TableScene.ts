@@ -7,7 +7,7 @@ import {
   trackPoint, kennelSlotPoint, homeSlotPoint, drawPileCenter, discardPileCenter, computeBoardGeometry,
 } from '../boardLayout';
 import type { BoardGeometry } from '../boardLayout';
-import { PALETTE } from '../theme';
+import { hueToCss, hueToHex } from '../color';
 import { CARD_FACE_SPRITE } from '../cardArt';
 import { EMPTY_TURN_ANIMATION } from '../animationPlan';
 import type { CardDrawAnimation, MarbleAnimation, TurnAnimation } from '../animationPlan';
@@ -25,7 +25,6 @@ const CURRENT_PLAYER_MARKER_PADDING = 24;
 const MOVE_TWEEN_MS = 350;
 const POP_IN_MS = 250;
 const WALK_STEP_MS = 90;
-const MAX_PLAYERS = 6;
 // Track tile sprite pixel size is fixed regardless of player count, but tile *count* scales
 // with it (more players = more, smaller-arc slots around the same-ish ring) - rendering
 // tiles at their full native size left them touching/overlapping, worse the more players
@@ -73,12 +72,17 @@ export class TableScene extends Phaser.Scene {
     center: { x: 0, y: 0 }, trackRadius: 0, kennelRadius: 0, homeRadiusOuter: 0, homeRadiusStep: 0, stackOffset: 0, stackCenter: { x: 0, y: 0 }, rotation: 0,
   };
   private marbleSprites = new Map<string, Phaser.GameObjects.Image>();
+  /** hue -> generated texture key, filled lazily by tintedMarbleKey - one small offscreen-
+   * canvas recolor per hue actually used in a game (never more than the player count), not
+   * per marble, so re-tinting the same seat's later marbles is free. */
+  private marbleTextureCache = new Map<number, string>();
   private lastDiscardCardId: string | null = null;
   private pendingPlan: MarbleAnimation[] = [];
   private pendingCaptures: string[] = [];
-  /** Seat (PlayerId) -> palette/sprite index (0-5), from the lobby's color picker - default
-   * identity if never set (each seat gets the palette color matching its own index). */
-  private colorAssignment: number[] = [0, 1, 2, 3, 4, 5];
+  /** Seat (PlayerId) -> hue (0-359), from the lobby's color picker - default spread evenly
+   * around the color wheel if never set. Converted to a tint via hueToHex - never a lookup
+   * into a fixed palette, color is continuous now (see tintedMarbleKey below). */
+  private colorAssignment: number[] = [0, 60, 120, 180, 240, 300];
   /** Whose base renders at the bottom of the ring - see boardLayout.ts's BoardGeometry.rotation.
    * Updated every render (not one-time like colorAssignment) since local hotseat re-rotates
    * to face whoever's turn it currently is - see GameBoard.tsx's mySeat prop. */
@@ -97,11 +101,7 @@ export class TableScene extends Phaser.Scene {
     for (const [rank, src] of Object.entries(CARD_FACE_SPRITE)) {
       this.load.image(`card-face-${rank}`, src);
     }
-    // Loads all 6 regardless of this game's actual player count - config isn't known yet at
-    // preload time, and loading a handful of unused small sprites is cheap.
-    for (let p = 0; p < MAX_PLAYERS; p++) {
-      this.load.image(`marble-p${p}`, `/sprites/marble-p${p}.png`);
-    }
+    this.load.image('marble-base', '/sprites/marble-base.png');
   }
 
   create() {
@@ -174,6 +174,38 @@ export class TableScene extends Phaser.Scene {
     return homeSlotPoint(config, marble.owner, marble.location.index, this.geo);
   }
 
+  /** Recolors the neutral 'marble-base' texture to a given hue and registers the result as
+   * its own texture, cached by hue so repeat calls are free. Exists because Image.setTint is
+   * a no-op under this project's Phaser.CANVAS renderer (confirmed by direct pixel sampling -
+   * marbles rendered plain grey, untinted, with setTint applied) - don't replace this with
+   * setTint without re-confirming tint actually paints under Canvas first. 'multiply' then
+   * 'destination-in' is the standard canvas recolor recipe: multiply blends the flat tint
+   * color across the whole canvas (painting outside the marble's silhouette too, since the
+   * fill itself is fully opaque), then destination-in clips back down to wherever the base
+   * image actually had pixels - preserving the border/facet shading baked into
+   * marble-base.png instead of flattening the marble to one solid tone. */
+  private tintedMarbleKey(hue: number): string {
+    const cached = this.marbleTextureCache.get(hue);
+    if (cached) return cached;
+
+    const key = `marble-tint-${hue}`;
+    const base = this.textures.get('marble-base').getSourceImage() as HTMLImageElement;
+    const canvas = document.createElement('canvas');
+    canvas.width = base.width;
+    canvas.height = base.height;
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(base, 0, 0);
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = hueToCss(hue);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(base, 0, 0);
+
+    this.textures.addCanvas(key, canvas);
+    this.marbleTextureCache.set(hue, key);
+    return key;
+  }
+
   private redrawBoard() {
     if (!this.boardLayer || !this.state) return;
     const config = this.state.config;
@@ -203,7 +235,7 @@ export class TableScene extends Phaser.Scene {
       // planMovement), not just a visual placeholder.
       for (let slot = 0; slot < HOME_STRETCH_LENGTH; slot++) {
         const { x, y } = homeSlotPoint(config, player, slot, this.geo);
-        const color = PALETTE.players[this.colorAssignment[player]];
+        const color = hueToHex(this.colorAssignment[player]);
         this.boardLayer!.add(
           this.add.rectangle(x, y, goalSize, goalSize, color, 0.55).setStrokeStyle(2, color),
         );
@@ -264,7 +296,9 @@ export class TableScene extends Phaser.Scene {
       const alpha = passedOwners.has(marble.owner) ? 0.4 : 1;
 
       if (!existing) {
-        const sprite = this.add.image(x, y, `marble-p${this.colorAssignment[marble.owner]}`).setDisplaySize(marbleSize, marbleSize).setAlpha(alpha);
+        const sprite = this.add.image(x, y, this.tintedMarbleKey(this.colorAssignment[marble.owner]))
+          .setDisplaySize(marbleSize, marbleSize)
+          .setAlpha(alpha);
         this.marbleLayer!.add(sprite);
         this.marbleSprites.set(marble.id, sprite);
         if (animate) {
@@ -388,7 +422,7 @@ export class TableScene extends Phaser.Scene {
     const config = this.state.config;
     const player = this.state.currentPlayer;
     const size = (MARBLE_SIZE + CURRENT_PLAYER_MARKER_PADDING) * this.pieceScale;
-    const color = PALETTE.players[this.colorAssignment[player]];
+    const color = hueToHex(this.colorAssignment[player]);
 
     this.currentPlayerMarkers.forEach((marker, slot) => {
       const { x, y } = kennelSlotPoint(config, player, slot, this.geo);

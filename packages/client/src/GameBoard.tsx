@@ -17,6 +17,7 @@ import type { FlightPlan } from './FlyingCard';
 import { DealAnimation } from './DealAnimation';
 import type { DealPlan } from './DealAnimation';
 import { WinScreen } from './WinScreen';
+import { playerLabel } from './game/playerName';
 
 interface Props {
   state: GameState;
@@ -26,13 +27,17 @@ interface Props {
   lastPlanRef: MutableRefObject<TurnAnimation>;
   mySeat: PlayerId;
   colors: number[];
+  /** Display names by seat - online only (see OnlineSession.playerNames). undefined for
+   * local hotseat, which has no display-name concept (everyone shares one screen); falls
+   * back to "Player N" everywhere it's used (see game/playerName.ts). */
+  playerNames?: string[];
   /** Server epoch ms when the current turn auto-plays - online only (see GameRoom.ts /
    * useOnlineGameState.ts). undefined for local hotseat, which has no server to enforce a
    * timeout and so shows no timer at all. */
   turnDeadline?: number;
 }
 
-export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, mySeat, colors, turnDeadline }: Props) {
+export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, mySeat, colors, playerNames, turnDeadline }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const handPanelRef = useRef<HTMLDivElement>(null);
   const bridgeRef = useRef<PhaserBridge | null>(null);
@@ -106,12 +111,12 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
 
   const lastMoveAnnouncement =
     state.lastPlayedCard && state.lastPlayedBy !== null
-      ? `Player ${state.lastPlayedBy + 1} played ${state.lastPlayedCard.rank}${state.lastPlayedCard.suit ? ` of ${state.lastPlayedCard.suit}` : ''}.`
+      ? `${playerLabel(playerNames, state.lastPlayedBy)} played ${state.lastPlayedCard.rank}${state.lastPlayedCard.suit ? ` of ${state.lastPlayedCard.suit}` : ''}.`
       : '';
   // Announces whose turn it now is, not just what was played - matters most online, where
   // the board overlay silently mounts or unmounts based on isMyTurn with no other cue for a
   // screen reader user that the board just became (or stopped being) interactive.
-  const turnAnnouncement = isMyTurn ? "It's your turn." : `Waiting for Player ${state.currentPlayer + 1}.`;
+  const turnAnnouncement = isMyTurn ? "It's your turn." : `Waiting for ${playerLabel(playerNames, state.currentPlayer)}.`;
 
   const selectedCard = state.hands[state.currentPlayer].find((c) => c.id === selectedCardId) ?? null;
 
@@ -187,10 +192,10 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
       <div
         ref={containerRef}
         role="img"
-        aria-label={`Game board. Player ${state.currentPlayer + 1}'s turn.`}
+        aria-label={`Game board. ${playerLabel(playerNames, state.currentPlayer)}'s turn.`}
         style={{ flex: 1, minHeight: 0, position: 'relative' }}
       >
-        <OpponentHandCounts state={state} containerSize={containerSize} mySeat={mySeat} />
+        <OpponentHandCounts state={state} containerSize={containerSize} mySeat={mySeat} playerNames={playerNames} />
         {isMyTurn && (
           <BoardOverlay
             state={state}
@@ -209,7 +214,7 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
         {lastMoveAnnouncement} {turnAnnouncement}
       </p>
       <div ref={handPanelRef} className="hand-panel-slot" style={{ opacity: dealPlan ? 0 : 1 }}>
-        <TurnLabel player={state.currentPlayer} />
+        <TurnLabel player={state.currentPlayer} playerNames={playerNames} />
         {turnDeadline !== undefined && <TurnTimerBar deadline={turnDeadline} />}
         <HandPanel
           state={state}
@@ -222,7 +227,7 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
       {flight && <FlyingCard plan={flight} onDone={() => setFlight(null)} />}
       {stolenFlight && <FlyingCard plan={stolenFlight} onDone={() => setStolenFlight(null)} />}
       {dealPlan && <DealAnimation plan={dealPlan} onDone={() => setDealPlan(null)} />}
-      <WinScreen state={state} colors={colors} onPlayAgain={restart} />
+      <WinScreen state={state} colors={colors} playerNames={playerNames} onPlayAgain={restart} />
     </main>
   );
 }

@@ -21,6 +21,7 @@ class RoomState extends Schema {
   @type('string') mode: GameMode = 'ffa';
   @type(['number']) colors = new ArraySchema<number>();
   @type(['string']) seatSessionIds = new ArraySchema<string>();
+  @type(['string']) playerNames = new ArraySchema<string>();
   @type('string') stateJson = '';
   /** Epoch ms when the current turn auto-plays if nobody acts - see scheduleTurnTimeout.
    * 0 before the game starts. Purely informational for clients (TurnTimerBar.tsx); the
@@ -31,11 +32,30 @@ class RoomState extends Schema {
 interface CreateOptions {
   playerCount: GameConfig['playerCount'];
   mode: GameMode;
-  colors: number[];
+  hostHue: number;
 }
 
 interface PlayMessage {
   move: Move;
+}
+
+interface SetColorMessage {
+  hue: number;
+}
+
+interface JoinOptions {
+  displayName: string;
+}
+
+/** Seat 0 (the host) is the only seat that exists at room creation, so it's the only one
+ * that can arrive with a chosen hue - every other seat defaults to an evenly-spread hue
+ * (same spread as the client's defaultColors, PlayerSetupPicker.tsx) and picks its real
+ * color after joining, via handleSetColor. Color is a continuous hue now, not a pick from a
+ * fixed palette, so unlike the old version there's no need to keep hues distinct/unique. */
+function seedColors(playerCount: number, hostHue: number): number[] {
+  const colors = Array.from({ length: playerCount }, (_, i) => Math.round((360 / playerCount) * i));
+  colors[0] = hostHue;
+  return colors;
 }
 
 /**
@@ -57,14 +77,17 @@ export class GameRoom extends Room<RoomState> {
     this.setState(new RoomState());
     this.state.playerCount = options.playerCount;
     this.state.mode = options.mode;
-    options.colors.forEach((c) => this.state.colors.push(c));
+    seedColors(options.playerCount, options.hostHue).forEach((c) => this.state.colors.push(c));
 
     this.onMessage('play', (client, message: PlayMessage) => this.handlePlay(client, message));
     this.onMessage('passHand', (client) => this.handlePassHand(client));
+    this.onMessage('setColor', (client, message: SetColorMessage) => this.handleSetColor(client, message));
   }
 
-  onJoin(client: Client) {
+  onJoin(client: Client, options: JoinOptions) {
+    const seatIndex = this.state.seatSessionIds.length;
     this.state.seatSessionIds.push(client.sessionId);
+    this.state.playerNames.push(options.displayName?.trim() || `Player ${seatIndex + 1}`);
 
     if (this.state.seatSessionIds.length === this.state.playerCount) {
       const config: GameConfig = { playerCount: this.state.playerCount as GameConfig['playerCount'], mode: this.state.mode };
@@ -83,7 +106,10 @@ export class GameRoom extends Room<RoomState> {
     // never made it into a started game gets removed, so a later joiner can take it.
     if (this.state.phase !== 'waiting') return;
     const index = this.state.seatSessionIds.indexOf(client.sessionId);
-    if (index !== -1) this.state.seatSessionIds.splice(index, 1);
+    if (index !== -1) {
+      this.state.seatSessionIds.splice(index, 1);
+      this.state.playerNames.splice(index, 1);
+    }
   }
 
   private seatFor(client: Client): PlayerId | null {
@@ -159,5 +185,18 @@ export class GameRoom extends Room<RoomState> {
     if (hasLegalMove) return;
 
     this.commitTurn((next) => passHand(next, seat));
+  }
+
+  /** Only legal pre-game (colors are fixed once play starts, matching how config/mode also
+   * can't change mid-game). No uniqueness check - two seats landing on the same or a nearby
+   * hue is the players' own choice now that color is continuous, not a fixed 6-entry
+   * palette (see seedColors above). */
+  private handleSetColor(client: Client, { hue }: SetColorMessage) {
+    if (this.state.phase !== 'waiting') return;
+    if (!Number.isInteger(hue) || hue < 0 || hue >= 360) return;
+    const seat = this.seatFor(client);
+    if (seat === null) return;
+
+    this.state.colors[seat] = hue;
   }
 }

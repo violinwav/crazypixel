@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Room } from 'colyseus.js';
 import type { PlayerId } from '@crazypixel/shared';
-import { createRoom, joinRoom } from './game/network';
+import { createRoom, joinRoom, setSeatColor } from './game/network';
 import type { RoomState } from './game/network';
 import { PlayerSetupPicker, defaultColors } from './PlayerSetupPicker';
 import type { PlayerSetup } from './PlayerSetupPicker';
+import { ColorSlider } from './ColorSlider';
+import { hueToCss } from './game/color';
 
 export interface OnlineSession {
   room: Room<RoomState>;
   mySeat: PlayerId;
   colors: number[];
+  playerNames: string[];
 }
 
 interface Props {
@@ -17,16 +20,43 @@ interface Props {
 }
 
 type Step =
-  | { kind: 'choose' }
-  | { kind: 'hostConfig'; setup: PlayerSetup; error: string | null }
-  | { kind: 'joinCode'; code: string; error: string | null }
+  | { kind: 'name'; name: string }
+  | { kind: 'choose'; name: string }
+  | { kind: 'hostConfig'; name: string; setup: PlayerSetup; error: string | null }
+  | { kind: 'joinCode'; name: string; code: string; error: string | null }
   | { kind: 'connecting' }
   | { kind: 'waiting'; room: Room<RoomState>; isHost: boolean };
 
 export function OnlineLobby({ onReady }: Props) {
-  const [step, setStep] = useState<Step>({ kind: 'choose' });
+  const [step, setStep] = useState<Step>({ kind: 'name', name: '' });
+
+  if (step.kind === 'name') {
+    return (
+      <section className="cp-panel lobby__section">
+        <h2 className="lobby__heading">Display Name</h2>
+        <label className="lobby__hint" htmlFor="online-lobby-name-input">What should other players call you?</label>
+        <input
+          id="online-lobby-name-input"
+          type="text"
+          className="lobby__code-input"
+          value={step.name}
+          maxLength={20}
+          onChange={(e) => setStep({ kind: 'name', name: e.target.value })}
+        />
+        <button
+          type="button"
+          className="cp-button lobby__start"
+          disabled={step.name.trim().length === 0}
+          onClick={() => setStep({ kind: 'choose', name: step.name.trim() })}
+        >
+          Continue
+        </button>
+      </section>
+    );
+  }
 
   if (step.kind === 'choose') {
+    const { name } = step;
     return (
       <section className="cp-panel lobby__section">
         <h2 className="lobby__heading">Online</h2>
@@ -36,13 +66,14 @@ export function OnlineLobby({ onReady }: Props) {
             className="cp-button"
             onClick={() => setStep({
               kind: 'hostConfig',
+              name,
               setup: { config: { playerCount: 4, mode: 'ffa' }, colors: defaultColors(4) },
               error: null,
             })}
           >
             Host a Game
           </button>
-          <button type="button" className="cp-button" onClick={() => setStep({ kind: 'joinCode', code: '', error: null })}>
+          <button type="button" className="cp-button" onClick={() => setStep({ kind: 'joinCode', name, code: '', error: null })}>
             Join a Game
           </button>
         </div>
@@ -51,10 +82,14 @@ export function OnlineLobby({ onReady }: Props) {
   }
 
   if (step.kind === 'hostConfig') {
-    const { setup } = step;
+    const { name, setup } = step;
     return (
       <>
-        <PlayerSetupPicker value={setup} onChange={(next) => setStep({ kind: 'hostConfig', setup: next, error: null })} />
+        <PlayerSetupPicker
+          value={setup}
+          onChange={(next) => setStep({ kind: 'hostConfig', name, setup: next, error: null })}
+          colorSeats={0}
+        />
         {step.error && (
           <p className="lobby__error" role="alert">{step.error}</p>
         )}
@@ -63,9 +98,9 @@ export function OnlineLobby({ onReady }: Props) {
           className="cp-button lobby__start"
           onClick={() => {
             setStep({ kind: 'connecting' });
-            createRoom(setup)
+            createRoom(setup, name)
               .then((room) => setStep({ kind: 'waiting', room, isHost: true }))
-              .catch(() => setStep({ kind: 'hostConfig', setup, error: 'Could not create room. Check your connection and try again.' }));
+              .catch(() => setStep({ kind: 'hostConfig', name, setup, error: 'Could not create room. Check your connection and try again.' }));
           }}
         >
           Create Room
@@ -75,6 +110,7 @@ export function OnlineLobby({ onReady }: Props) {
   }
 
   if (step.kind === 'joinCode') {
+    const { name } = step;
     return (
       <section className="cp-panel lobby__section">
         <h2 className="lobby__heading">Join a Game</h2>
@@ -86,7 +122,7 @@ export function OnlineLobby({ onReady }: Props) {
           value={step.code}
           aria-describedby={step.error ? 'online-lobby-code-error' : undefined}
           aria-invalid={step.error ? true : undefined}
-          onChange={(e) => setStep({ kind: 'joinCode', code: e.target.value, error: null })}
+          onChange={(e) => setStep({ kind: 'joinCode', name, code: e.target.value, error: null })}
         />
         {step.error && (
           <p id="online-lobby-code-error" className="lobby__error" role="alert">{step.error}</p>
@@ -98,9 +134,9 @@ export function OnlineLobby({ onReady }: Props) {
           onClick={() => {
             const { code } = step;
             setStep({ kind: 'connecting' });
-            joinRoom(code)
+            joinRoom(code, name)
               .then((room) => setStep({ kind: 'waiting', room, isHost: false }))
-              .catch(() => setStep({ kind: 'joinCode', code, error: 'Room not found or full.' }));
+              .catch(() => setStep({ kind: 'joinCode', name, code, error: 'Room not found or full.' }));
           }}
         >
           Join
@@ -132,13 +168,19 @@ function WaitingRoom({ room, isHost, onReady }: { room: Room<RoomState>; isHost:
     // lifecycle convention as GameView's Phaser instance.
   }, [room]);
 
+  const mySeatIndex = Array.from(room.state.seatSessionIds).indexOf(room.sessionId);
+
   useEffect(() => {
     if (readyFiredRef.current) return;
     if (room.state.phase !== 'playing') return;
-    const seatIndex = Array.from(room.state.seatSessionIds).indexOf(room.sessionId);
-    if (seatIndex === -1) return;
+    if (mySeatIndex === -1) return;
     readyFiredRef.current = true;
-    onReady({ room, mySeat: seatIndex as PlayerId, colors: Array.from(room.state.colors) });
+    onReady({
+      room,
+      mySeat: mySeatIndex as PlayerId,
+      colors: Array.from(room.state.colors),
+      playerNames: Array.from(room.state.playerNames),
+    });
   });
 
   const filledSeats = room.state.seatSessionIds.length;
@@ -162,14 +204,28 @@ function WaitingRoom({ room, isHost, onReady }: { room: Room<RoomState>; isHost:
       )}
       <div className="lobby__seats">
         {Array.from({ length: totalSeats }, (_, i) => (
-          <div key={i} className="lobby__seat">
+          <div key={i} className="lobby__seat lobby__seat--row">
+            {i < filledSeats && (
+              <span
+                className="lobby__seat-swatch"
+                style={{ backgroundColor: hueToCss(room.state.colors[i]) }}
+                aria-hidden="true"
+              />
+            )}
             <span className={`lobby__seat-label${i < filledSeats ? '' : ' lobby__seat-label--empty'}`}>
-              Player {i + 1} {i < filledSeats ? '- connected' : '- waiting...'}
+              {i < filledSeats ? `${room.state.playerNames[i]} - connected` : `Player ${i + 1} - waiting...`}
             </span>
           </div>
         ))}
       </div>
       <p className="lobby__hint">{filledSeats} / {totalSeats} players connected.</p>
+      {mySeatIndex !== -1 && (
+        <ColorSlider
+          label="Your color"
+          value={room.state.colors[mySeatIndex] ?? 0}
+          onChange={(hue) => setSeatColor(room, hue)}
+        />
+      )}
       <p aria-live="polite" className="visually-hidden">{announcement}</p>
     </section>
   );
