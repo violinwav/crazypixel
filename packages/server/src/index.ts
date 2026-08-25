@@ -10,7 +10,11 @@ const httpServer = createServer(app);
 const gameServer = new Server({
   transport: new WebSocketTransport({ server: httpServer }),
 });
-gameServer.define('game', GameRoom);
+// filterBy(['code']) is what makes client.join('game', { code }) (see network.ts's
+// joinRoom) find THIS specific room instead of colyseus's default "any open room of this
+// name" matchmaking - a join request only matches a room whose metadata.code (set in
+// GameRoom.onCreate) equals the option's code.
+gameServer.define('game', GameRoom).filterBy(['code']);
 
 const port = Number(process.env.PORT) || 2567;
 httpServer.listen(port, () => {

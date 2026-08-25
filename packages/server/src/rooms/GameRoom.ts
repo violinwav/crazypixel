@@ -22,6 +22,9 @@ class RoomState extends Schema {
   @type(['number']) colors = new ArraySchema<number>();
   @type(['string']) seatSessionIds = new ArraySchema<string>();
   @type(['string']) playerNames = new ArraySchema<string>();
+  /** The short code players actually share to join (see generateCode below) - room.id
+   * itself is still colyseus's own long internal id, never shown to a player. */
+  @type('string') code = '';
   @type('string') stateJson = '';
   /** Epoch ms when the current turn auto-plays if nobody acts - see scheduleTurnTimeout.
    * 0 before the game starts. Purely informational for clients (TurnTimerBar.tsx); the
@@ -58,11 +61,33 @@ function seedColors(playerCount: number, hostHue: number): number[] {
   return colors;
 }
 
+// In-process registry of codes currently in use, so two simultaneously-open rooms can't
+// collide - reserved in onCreate, released in onDispose. Deliberately not a persistent/
+// shared store (matches this project's existing "no separate matchmaking registry"
+// simplicity - see the class doc below): fine for one server process, which is all this
+// project runs.
+const activeCodes = new Set<string>();
+
+function generateCode(): string {
+  let code: string;
+  do {
+    code = String(Math.floor(1000 + Math.random() * 9000));
+  } while (activeCodes.has(code));
+  activeCodes.add(code);
+  return code;
+}
+
 /**
  * Server-authoritative game room: re-derives legal moves via the shared engine before
  * accepting anything a client sends, so a stale/buggy/malicious client can't desync the
- * game or move out of turn. `room.id` (Colyseus's own short random ID) doubles as the
- * "room code" players share to join - no separate code registry.
+ * game or move out of turn. `state.code` (see generateCode above) is the short code players
+ * share to join - matched server-side via filterBy(['code']), see index.ts - not
+ * `room.id`, colyseus's own long internal id, which is never shown to a player.
+ *
+ * The game doesn't auto-start the instant every seat fills - seat 0 (the host) has to send
+ * 'startGame' (see handleStartGame), same as the local hotseat lobby's own explicit Start
+ * Game button. Gives every joining player a moment to actually look at and adjust their own
+ * color before play begins, instead of it starting under them mid-pick.
  *
  * Every turn gets a 20s clock (TURN_MS) - see scheduleTurnTimeout/autoPlayTurn. This also
  * means a mid-game disconnect (see onLeave) doesn't stall the game forever: the frozen
@@ -72,32 +97,31 @@ export class GameRoom extends Room<RoomState> {
   private gameState: GameState | null = null;
   private turnTimeout: Delayed | null = null;
 
-  onCreate(options: CreateOptions) {
+  async onCreate(options: CreateOptions) {
     this.maxClients = options.playerCount;
     this.setState(new RoomState());
     this.state.playerCount = options.playerCount;
     this.state.mode = options.mode;
+    this.state.code = generateCode();
+    // A *top-level* field on the room listing, not this.setMetadata() (which nests under
+    // listing.metadata) - filterBy(['code'])'s join-side matching (index.ts) compares
+    // options.code against room.listing.code directly, the same top-level pattern
+    // setPrivate() uses for `listing.private` elsewhere in colyseus's own Room class. Nested
+    // metadata wouldn't be found by that match at all.
+    this.listing.code = this.state.code;
+    await this.listing.save();
     seedColors(options.playerCount, options.hostHue).forEach((c) => this.state.colors.push(c));
 
     this.onMessage('play', (client, message: PlayMessage) => this.handlePlay(client, message));
     this.onMessage('passHand', (client) => this.handlePassHand(client));
     this.onMessage('setColor', (client, message: SetColorMessage) => this.handleSetColor(client, message));
+    this.onMessage('startGame', (client) => this.handleStartGame(client));
   }
 
   onJoin(client: Client, options: JoinOptions) {
     const seatIndex = this.state.seatSessionIds.length;
     this.state.seatSessionIds.push(client.sessionId);
     this.state.playerNames.push(options.displayName?.trim() || `Player ${seatIndex + 1}`);
-
-    if (this.state.seatSessionIds.length === this.state.playerCount) {
-      const config: GameConfig = { playerCount: this.state.playerCount as GameConfig['playerCount'], mode: this.state.mode };
-      const state = createInitialState(config);
-      startGame(state);
-      this.gameState = state;
-      this.state.phase = 'playing';
-      this.state.stateJson = JSON.stringify(state);
-      this.scheduleTurnTimeout();
-    }
   }
 
   onLeave(client: Client) {
@@ -110,6 +134,10 @@ export class GameRoom extends Room<RoomState> {
       this.state.seatSessionIds.splice(index, 1);
       this.state.playerNames.splice(index, 1);
     }
+  }
+
+  onDispose() {
+    activeCodes.delete(this.state.code);
   }
 
   private seatFor(client: Client): PlayerId | null {
@@ -198,5 +226,23 @@ export class GameRoom extends Room<RoomState> {
     if (seat === null) return;
 
     this.state.colors[seat] = hue;
+  }
+
+  /** Only seat 0 (the host) can start, and only once every seat is filled - re-derived
+   * server-side rather than trusted from the client, same reasoning as every other message
+   * here (handlePlay etc.): a stale/buggy client's Start Game button being enabled doesn't
+   * mean the server has to believe it. */
+  private handleStartGame(client: Client) {
+    if (this.state.phase !== 'waiting') return;
+    if (this.seatFor(client) !== 0) return;
+    if (this.state.seatSessionIds.length !== this.state.playerCount) return;
+
+    const config: GameConfig = { playerCount: this.state.playerCount as GameConfig['playerCount'], mode: this.state.mode };
+    const state = createInitialState(config);
+    startGame(state);
+    this.gameState = state;
+    this.state.phase = 'playing';
+    this.state.stateJson = JSON.stringify(state);
+    this.scheduleTurnTimeout();
   }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Room } from 'colyseus.js';
 import type { PlayerId } from '@crazypixel/shared';
-import { createRoom, joinRoom, setSeatColor } from './game/network';
+import { createRoom, joinRoom, setSeatColor, startGame } from './game/network';
 import type { RoomState } from './game/network';
 import { PlayerSetupPicker, defaultColors } from './PlayerSetupPicker';
 import type { PlayerSetup } from './PlayerSetupPicker';
@@ -114,15 +114,18 @@ export function OnlineLobby({ onReady }: Props) {
     return (
       <section className="cp-panel lobby__section">
         <h2 className="lobby__heading">Join a Game</h2>
-        <label className="lobby__hint" htmlFor="online-lobby-code-input">Room code</label>
+        <label className="lobby__hint" htmlFor="online-lobby-code-input">4-digit room code</label>
         <input
           id="online-lobby-code-input"
           type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          maxLength={4}
           className="lobby__code-input"
           value={step.code}
           aria-describedby={step.error ? 'online-lobby-code-error' : undefined}
           aria-invalid={step.error ? true : undefined}
-          onChange={(e) => setStep({ kind: 'joinCode', name, code: e.target.value, error: null })}
+          onChange={(e) => setStep({ kind: 'joinCode', name, code: e.target.value.replace(/\D/g, '').slice(0, 4), error: null })}
         />
         {step.error && (
           <p id="online-lobby-code-error" className="lobby__error" role="alert">{step.error}</p>
@@ -130,7 +133,7 @@ export function OnlineLobby({ onReady }: Props) {
         <button
           type="button"
           className="cp-button"
-          disabled={step.code.trim().length === 0}
+          disabled={step.code.length !== 4}
           onClick={() => {
             const { code } = step;
             setStep({ kind: 'connecting' });
@@ -185,12 +188,14 @@ function WaitingRoom({ room, isHost, onReady }: { room: Room<RoomState>; isHost:
 
   const filledSeats = room.state.seatSessionIds.length;
   const totalSeats = room.state.playerCount;
+  const isFull = filledSeats === totalSeats;
+  const modeLabel = room.state.mode === 'teams' ? 'Partners' : 'Free for all';
   // One persistent live region for everything that changes here (room creation, seats
   // filling) - same convention as GameBoard's lastMoveAnnouncement paragraph, rather than
   // marking individually mounting/unmounting elements as live (unreliable across screen
   // readers when the region itself appears at the same time as its content).
   const announcement = isHost
-    ? `Room created. Code ${room.id}. ${filledSeats} of ${totalSeats} players connected.`
+    ? `Room created. Code ${room.state.code}. ${filledSeats} of ${totalSeats} players connected.`
     : `${filledSeats} of ${totalSeats} players connected.`;
 
   return (
@@ -199,9 +204,13 @@ function WaitingRoom({ room, isHost, onReady }: { room: Room<RoomState>; isHost:
       {isHost && (
         <>
           <p className="lobby__hint">Share this code:</p>
-          <p className="lobby__code">{room.id}</p>
+          <p className="lobby__code">{room.state.code}</p>
         </>
       )}
+      {/* Same room overview for host and joiners alike - player count/mode is fixed once
+          the host creates the room (see GameRoom.ts), so it's shown here as plain info, not
+          something a joiner can edit. */}
+      <p className="lobby__hint">{totalSeats} players · {modeLabel}</p>
       <div className="lobby__seats">
         {Array.from({ length: totalSeats }, (_, i) => (
           <div key={i} className="lobby__seat lobby__seat--row">
@@ -225,6 +234,20 @@ function WaitingRoom({ room, isHost, onReady }: { room: Room<RoomState>; isHost:
           value={room.state.colors[mySeatIndex] ?? 0}
           onChange={(hue) => setSeatColor(room, hue)}
         />
+      )}
+      {isHost ? (
+        <button
+          type="button"
+          className="cp-button lobby__start"
+          disabled={!isFull}
+          onClick={() => startGame(room)}
+        >
+          Start Game
+        </button>
+      ) : (
+        <p className="lobby__hint" role="status">
+          {isFull ? 'Waiting for the host to start the game.' : 'Waiting for more players to join.'}
+        </p>
       )}
       <p aria-live="polite" className="visually-hidden">{announcement}</p>
     </section>

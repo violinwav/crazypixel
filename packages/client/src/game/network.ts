@@ -40,6 +40,9 @@ export interface RoomState {
   colors: number[];
   seatSessionIds: string[];
   playerNames: string[];
+  /** The short code shown in the UI to share (see GameRoom.ts's generateCode) - distinct
+   * from room.id, colyseus's own long internal id. */
+  code: string;
   stateJson: string;
   /** Epoch ms when the current turn auto-plays - see GameRoom.ts's scheduleTurnTimeout. */
   turnDeadline: number;
@@ -59,11 +62,18 @@ export function createRoom({ config, colors }: PlayerSetup, displayName: string)
   });
 }
 
+// client.join (not joinById) - matches an existing room by metadata via filterBy(['code'])
+// on the server's room definition (index.ts), so this only ever needs the short code the
+// host shared, never colyseus's own long internal room id.
 export function joinRoom(code: string, displayName: string): Promise<Room<RoomState>> {
   const client = new Client(SERVER_URL);
-  return client.joinById<RoomState>(code.trim(), { displayName });
+  return client.join<RoomState>('game', { code: code.trim(), displayName });
 }
 
 export function setSeatColor(room: Room<RoomState>, hue: number): void {
   room.send('setColor', { hue });
+}
+
+export function startGame(room: Room<RoomState>): void {
+  room.send('startGame');
 }
