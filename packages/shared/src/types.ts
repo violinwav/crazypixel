@@ -31,7 +31,9 @@ export type GamePhase = 'dealing' | 'cardPass' | 'playing' | 'roundEnd' | 'gameE
 export type GameMode = 'ffa' | 'teams';
 
 export interface GameConfig {
-  playerCount: 2 | 4 | 6;
+  /** 3 is ffa-only - odd counts have no symmetric partner to pair with (see partnerOf in
+   * constants.ts), enforced client-side (PlayerSetupPicker.tsx locks Partners out for it). */
+  playerCount: 2 | 3 | 4 | 6;
   mode: GameMode;
 }
 

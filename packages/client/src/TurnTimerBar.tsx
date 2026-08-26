@@ -6,6 +6,22 @@ const TURN_MS = 20000;
 // 18... 17..." readout would drown out everything else on the page.
 const ANNOUNCE_THRESHOLDS_S = [10, 5];
 
+// Fill starts shifting toward red once half the turn's time is gone, reaching full red
+// (--player-red) at the quarter-remaining mark - not just an empty-bar cue, an increasingly
+// urgent color one too.
+const URGENCY_START_FRACTION = 0.5;
+const URGENCY_FULL_FRACTION = 0.25;
+const CALM_COLOR: [number, number, number] = [255, 255, 255]; // --ink
+const URGENT_COLOR: [number, number, number] = [255, 84, 112]; // --player-red
+
+function fillColorFor(fraction: number): string {
+  const urgency = Math.min(1, Math.max(0,
+    (URGENCY_START_FRACTION - fraction) / (URGENCY_START_FRACTION - URGENCY_FULL_FRACTION),
+  ));
+  const [r, g, b] = CALM_COLOR.map((c, i) => Math.round(c + (URGENT_COLOR[i] - c) * urgency));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
 interface Props {
   /** Server epoch ms when the current turn auto-plays - see GameRoom.ts's turnDeadline. This
    * bar is cosmetic only; the server is what actually enforces the timeout, so a client
@@ -50,7 +66,7 @@ export function TurnTimerBar({ deadline }: Props) {
     <div className="turn-timer">
       <span className="turn-timer__seconds" aria-hidden="true">{seconds}s</span>
       <div className="turn-timer__track" aria-hidden="true">
-        <div className="turn-timer__fill" style={{ width: `${fraction * 100}%` }} />
+        <div className="turn-timer__fill" style={{ width: `${fraction * 100}%`, background: fillColorFor(fraction) }} />
       </div>
       <p aria-live="polite" className="visually-hidden">{announcement}</p>
     </div>

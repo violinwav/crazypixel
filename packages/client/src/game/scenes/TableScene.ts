@@ -21,7 +21,10 @@ const MARBLE_SIZE = 24;
 const CARD_WIDTH = 80;
 const CARD_HEIGHT = 112;
 const GOAL_TILE_SIZE = 14;
-const CURRENT_PLAYER_MARKER_PADDING = 24;
+// Was 24 (marker sized double the marble itself, extending 12px past its edge on every
+// side) - a loose enough glow to visibly spill past its own kennel tile onto neighboring
+// board space instead of reading as clearly bound to the tile it's marking.
+const CURRENT_PLAYER_MARKER_PADDING = 8;
 const MOVE_TWEEN_MS = 350;
 const POP_IN_MS = 250;
 const WALK_STEP_MS = 90;
@@ -65,11 +68,16 @@ export class TableScene extends Phaser.Scene {
   private state: GameState | null = null;
   private boardLayer?: Phaser.GameObjects.Container;
   private currentPlayerMarkers: Phaser.GameObjects.Rectangle[] = [];
+  /** Whose kennel currentPlayerMarkers is currently showing (or fading into) - lets
+   * updateCurrentPlayerHighlight tell "still this player's turn, just re-rendering" apart
+   * from "turn actually changed", since setGameState fires on every move, not just ones that
+   * hand the turn to someone else (e.g. a 7-split plays several moves in one turn). */
+  private highlightedPlayer: PlayerId | null = null;
   private decorLayer?: Phaser.GameObjects.Container;
   private marbleLayer?: Phaser.GameObjects.Container;
   private titleText?: Phaser.GameObjects.Text;
   private geo: BoardGeometry = {
-    center: { x: 0, y: 0 }, trackRadius: 0, kennelRadius: 0, homeRadiusOuter: 0, homeRadiusStep: 0, stackOffset: 0, stackCenter: { x: 0, y: 0 }, rotation: 0,
+    center: { x: 0, y: 0 }, trackRadius: 0, kennelRadius: 0, handCountRadius: 0, homeRadiusOuter: 0, homeRadiusStep: 0, stackOffset: 0, stackCenter: { x: 0, y: 0 }, rotation: 0,
   };
   private marbleSprites = new Map<string, Phaser.GameObjects.Image>();
   /** hue -> generated texture key, filled lazily by tintedMarbleKey - one small offscreen-
@@ -109,20 +117,10 @@ export class TableScene extends Phaser.Scene {
       .text(0, 36, 'CRAZYPIXEL', { fontFamily: '"Press Start 2P"', fontSize: '20px', color: '#ffffff' })
       .setOrigin(0.5);
     this.boardLayer = this.add.container(0, 0);
-    // One small square per kennel slot (not inside decorLayer, which wipes and redraws every
-    // render) - stable tween targets that move between bases as turns cycle, not shapes
-    // destroyed and recreated each time. Four snug squares tracing the kennel's own arc read
-    // as "this base is highlighted" much better than one loose rectangle bounding all of
-    // them - square outline to match the board's own tile language, "you are here" from a
-    // brightness pulse (not a size change), a separate looping tween on alpha left running
-    // for each object's whole lifetime independent of the position tween in
-    // updateCurrentPlayerHighlight below (they touch different properties, so both can run
-    // on the same object at once without conflict).
-    this.currentPlayerMarkers = Array.from({ length: KENNEL_SIZE }, () => {
-      const marker = this.add.rectangle(0, 0, 1, 1, 0xffffff, 0.22).setStrokeStyle(3, 0xffffff, 1);
-      this.tweens.add({ targets: marker, alpha: 0.4, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-      return marker;
-    });
+    // currentPlayerMarkers (4 small squares tracing the active player's kennel arc) are
+    // created fresh by updateCurrentPlayerHighlight, not here - see that method for why they
+    // fade in/out at a fixed spot per player rather than persisting and tweening position
+    // between kennels.
     this.decorLayer = this.add.container(0, 0);
     this.marbleLayer = this.add.container(0, 0);
 
@@ -232,12 +230,16 @@ export class TableScene extends Phaser.Scene {
       }
       // Goal/home-stretch markers, tinted per player so "where do I need to get to" reads
       // clearly, not just where starts are. Functional now (see GameEngine.ts
-      // planMovement), not just a visual placeholder.
+      // planMovement), not just a visual placeholder. Fill is deliberately faint (0.55 used
+      // to read as near-opaque, close enough to a marble's own full-opacity fill that an
+      // occupied slot didn't look meaningfully different from an empty one) - the outline
+      // alone is enough to mark "this is a goal slot", leaving the fill free to stay almost
+      // invisible so a marble sitting in it actually stands out.
       for (let slot = 0; slot < HOME_STRETCH_LENGTH; slot++) {
         const { x, y } = homeSlotPoint(config, player, slot, this.geo);
         const color = hueToHex(this.colorAssignment[player]);
         this.boardLayer!.add(
-          this.add.rectangle(x, y, goalSize, goalSize, color, 0.55).setStrokeStyle(2, color),
+          this.add.rectangle(x, y, goalSize, goalSize, color, 0.16).setStrokeStyle(2, color, 0.85),
         );
       }
     });
@@ -293,7 +295,7 @@ export class TableScene extends Phaser.Scene {
       seen.add(marble.id);
       const { x, y } = this.marblePoint(marble);
       const existing = this.marbleSprites.get(marble.id);
-      const alpha = passedOwners.has(marble.owner) ? 0.4 : 1;
+      const alpha = passedOwners.has(marble.owner) ? 0.65 : 1;
 
       if (!existing) {
         const sprite = this.add.image(x, y, this.tintedMarbleKey(this.colorAssignment[marble.owner]))
@@ -412,32 +414,69 @@ export class TableScene extends Phaser.Scene {
     this.drawDiscardStack();
   }
 
-  /** Moves the 4 persistent per-slot markers (created once in create()) to snugly ring the
-   * active player's own 4 base marbles, tracing the kennel's natural arc instead of one
-   * loose rectangle bounding the whole cluster - tweening between bases as turns cycle
-   * rather than jumping. A resize/re-layout still snaps (animate=false), same reasoning as
-   * marble positions. */
+  /** Draws 4 small squares snugly ringing the active player's own 4 base marbles, tracing
+   * the kennel's natural arc instead of one loose rectangle bounding the whole cluster. On an
+   * actual turn change, the outgoing player's squares fade out in place and the new player's
+   * fade in in place - no sliding across the board between kennels, since the "whose base is
+   * this" question a moving highlight answers ambiguously mid-slide is exactly what a
+   * fixed-position crossfade avoids. A resize/re-layout still snaps instantly (animate=false),
+   * same reasoning as marble positions - it's not a game move. */
   private updateCurrentPlayerHighlight(animate: boolean) {
-    if (this.currentPlayerMarkers.length === 0 || !this.state) return;
+    if (!this.state) return;
     const config = this.state.config;
     const player = this.state.currentPlayer;
     const size = (MARBLE_SIZE + CURRENT_PLAYER_MARKER_PADDING) * this.pieceScale;
     const color = hueToHex(this.colorAssignment[player]);
 
-    this.currentPlayerMarkers.forEach((marker, slot) => {
-      const { x, y } = kennelSlotPoint(config, player, slot, this.geo);
-      marker.setFillStyle(color, 0.22);
-      marker.setStrokeStyle(3, color, 1);
-      marker.setSize(size, size);
-
-      if (!animate) {
+    // setGameState fires on every move, not just ones that hand the turn to someone else
+    // (e.g. a 7-split plays several moves in one turn) - only actually cross-fade when the
+    // highlighted player is really changing, otherwise just keep the existing squares
+    // in sync (color/size, in case colors loaded late; position, in case of a resize).
+    if (this.highlightedPlayer === player && this.currentPlayerMarkers.length > 0) {
+      this.currentPlayerMarkers.forEach((marker, slot) => {
+        const { x, y } = kennelSlotPoint(config, player, slot, this.geo);
+        marker.setFillStyle(color, 0.22);
+        marker.setStrokeStyle(3, color, 1);
+        marker.setSize(size, size);
         marker.setPosition(x, y);
-        return;
+      });
+      return;
+    }
+
+    if (this.currentPlayerMarkers.length > 0) {
+      const outgoing = this.currentPlayerMarkers;
+      if (animate) {
+        outgoing.forEach((marker) => {
+          this.tweens.killTweensOf(marker);
+          this.tweens.add({
+            targets: marker, alpha: 0, duration: MOVE_TWEEN_MS, ease: 'Cubic.easeOut', onComplete: () => marker.destroy(),
+          });
+        });
+      } else {
+        outgoing.forEach((marker) => marker.destroy());
       }
-      // Tweening to the same position (player unchanged, e.g. this render was actually
-      // triggered by something else) is a harmless no-op - no need to special-case it.
-      this.tweens.add({ targets: marker, x, y, duration: MOVE_TWEEN_MS, ease: 'Cubic.easeInOut' });
+    }
+
+    this.currentPlayerMarkers = Array.from({ length: KENNEL_SIZE }, (_, slot) => {
+      const { x, y } = kennelSlotPoint(config, player, slot, this.geo);
+      const marker = this.add.rectangle(x, y, size, size, color, 0.22).setStrokeStyle(3, color, 1);
+      if (animate) {
+        marker.setAlpha(0);
+        this.tweens.add({
+          targets: marker,
+          alpha: 1,
+          duration: MOVE_TWEEN_MS,
+          ease: 'Cubic.easeIn',
+          onComplete: () => {
+            this.tweens.add({ targets: marker, alpha: 0.4, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+          },
+        });
+      } else {
+        this.tweens.add({ targets: marker, alpha: 0.4, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      }
+      return marker;
     });
+    this.highlightedPlayer = player;
   }
 
   private drawDeckStack() {

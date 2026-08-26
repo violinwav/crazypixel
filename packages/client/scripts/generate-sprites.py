@@ -421,8 +421,10 @@ def generate_tiles():
     upscale(make_tile(PALETTE["bg_deep"]), 2).save(os.path.join(OUT_DIR, "tile-kennel.png"))
     # Every 4th track square (see TableScene.ts's redrawBoard) - a step between plain track
     # (bg_panel) and start (ink/white) so the ring reads as countable segments, still
-    # grayscale like the rest of the UI chrome.
-    upscale(make_tile(PALETTE["bg_raised"]), 2).save(os.path.join(OUT_DIR, "tile-quarter.png"))
+    # grayscale like the rest of the UI chrome. Half-bright white, not bg_raised (0x2C, only
+    # marginally lighter than bg_panel's 0x18) - that read as barely distinguishable from a
+    # plain track square at a glance, not the "every 4th square is different" cue it's for.
+    upscale(make_tile(shade(PALETTE["ink"], 0.5)), 2).save(os.path.join(OUT_DIR, "tile-quarter.png"))
     print("tiles: ok")
 
 

@@ -21,6 +21,10 @@ export interface BoardGeometry {
   center: Point;
   trackRadius: number;
   kennelRadius: number;
+  /** Where OpponentHandCounts badges anchor - see HAND_COUNT_RATIO above. Deliberately its
+   * own field, not derived from kennelRadius at the call site, so every consumer gets the
+   * same "further out than the kennel" radius without re-deriving the ratio. */
+  handCountRadius: number;
   homeRadiusOuter: number;
   homeRadiusStep: number;
   stackOffset: number;
@@ -45,9 +49,29 @@ const REFERENCE_TRACK_RADIUS = 220;
 // least some extra room, not just the longest track. Not imported from constants.ts to
 // avoid a dependency on player-count details this file otherwise doesn't need.
 const REFERENCE_TRACK_LENGTH = 48;
-const KENNEL_RATIO = 300 / REFERENCE_TRACK_RADIUS;
-const HOME_OUTER_RATIO = 195 / REFERENCE_TRACK_RADIUS;
-const HOME_STEP_RATIO = 26 / REFERENCE_TRACK_RADIUS;
+// Every ratio below is tuned as one system, not independently - each one governs how far a
+// layer sits from the layer just inside it, in reference-scale pixels, so the *gaps*
+// between layers (not just their individual distances from center) are what's actually
+// being chosen here:
+//   ring (220) -> home markers (190, stepping in by 30 per slot) -> kennel (260) ->
+//   hand-count indicator (310)
+// Compact end-to-end (kennel pulled way in from its old 300, hand-count from its old 345)
+// specifically because this whole ratio set also drives computeBoardGeometry's viewport-fit
+// clamp (available / outermostRatio below) - a smaller outermost ratio means more of the
+// viewport's actual size reaches the ring itself instead of being eaten by empty space
+// between the ring and the furthest-out badge.
+const KENNEL_RATIO = 260 / REFERENCE_TRACK_RADIUS;
+// Slot 0 (outermost) sits inside the ring with a clear gap to the start tile, not right up
+// against it, and each further slot steps 30px further in (see GOAL_TILE_SIZE=14 in
+// TableScene.ts - a 30px step against a 14px tile leaves real daylight between markers, not
+// just enough to avoid touching).
+const HOME_OUTER_RATIO = 190 / REFERENCE_TRACK_RADIUS;
+const HOME_STEP_RATIO = 30 / REFERENCE_TRACK_RADIUS;
+// Opponent hand-count indicator (OpponentHandCounts.tsx - a small fanned stack of card
+// icons, one per card in that opponent's hand) anchors here instead of at kennelRadius, so
+// it clears both the kennel cluster and the current-player glow around it (see
+// TableScene.ts's CURRENT_PLAYER_MARKER_PADDING) without sitting on top of either.
+const HAND_COUNT_RATIO = 310 / REFERENCE_TRACK_RADIUS;
 // Was 42 - at the card's current 80px width (TableScene.ts's CARD_WIDTH) that left barely
 // any gap between the draw and discard piles, closer to touching than two distinct stacks.
 const STACK_OFFSET_RATIO = 65 / REFERENCE_TRACK_RADIUS;
@@ -66,9 +90,12 @@ const EDGE_SAFETY_FACTOR = 0.82;
  * Grows the ring a bit for longer tracks (capped, and still clamped to the viewport below)
  * rather than just letting tiles get more cramped as player count goes up. Never shrinks
  * below the original 1x tuning (2P's shorter 32-square track keeps the same radius it
- * already had - it wasn't the one that looked cramped). */
+ * already had - it wasn't the one that looked cramped). Cap lowered from 1.5 to 1.25 - at
+ * 1.5 a 6P board (the case this boost grows the most for) rendered noticeably larger than
+ * every other player count on any viewport wide enough that the boost, not the viewport
+ * clamp, was what actually governed trackRadius - "the board gets very big at 4+ players." */
 function radiusBoostFor(trackLength: number): number {
-  return Math.max(1, Math.min(1.5, Math.sqrt(trackLength / REFERENCE_TRACK_LENGTH)));
+  return Math.max(1, Math.min(1.25, Math.sqrt(trackLength / REFERENCE_TRACK_LENGTH)));
 }
 
 // Bottom margin for the draw/discard stack anchor - big enough to clear a bigger card
@@ -90,11 +117,25 @@ export function computeBoardGeometry(
   playerCount: number = 4,
 ): BoardGeometry {
   const center: Point = { x: width / 2, y: height / 2 - 56 };
-  // Kennels/goal markers extend beyond the track itself (up to KENNEL_RATIO further out),
-  // so size the track off what leaves room for that, not the raw viewport half-size.
-  const available = (Math.min(width, Math.max(height - TITLE_MARGIN, 0)) / 2) * EDGE_SAFETY_FACTOR;
+  // Kennels/goal markers/hand-count badges extend beyond the track itself (up to
+  // outermostRatio further out, below), so size the track off what leaves room for that, not
+  // the raw viewport half-size. Measured as actual clearance from `center` in every
+  // direction, not `height / 2` - center is shifted *up* by 56px (room for the hand panel
+  // below), so the old symmetric height/2 calculation overstated how much headroom the ring
+  // actually had above it, letting the top-most badge size itself right off the top of the
+  // viewport (confirmed by reading its rendered bounding rect - top: -9, genuinely off-
+  // screen, not just visually tight against the title).
+  const available = Math.min(
+    width / 2,
+    center.y - TITLE_MARGIN,
+    Math.max(height - center.y, 0),
+  ) * EDGE_SAFETY_FACTOR;
   const desiredRadius = REFERENCE_TRACK_RADIUS * radiusBoostFor(trackLength);
-  const trackRadius = Math.max(80, Math.min(desiredRadius, available / KENNEL_RATIO));
+  // HAND_COUNT_RATIO is the furthest-out thing drawn off trackRadius now (further than
+  // KENNEL_RATIO) - clamping against KENNEL_RATIO alone would let the hand-count badges
+  // overflow the viewport on a tight screen.
+  const outermostRatio = Math.max(KENNEL_RATIO, HAND_COUNT_RATIO);
+  const trackRadius = Math.max(80, Math.min(desiredRadius, available / outermostRatio));
   const stackCenter: Point = { x: width / 2, y: Math.max(center.y + trackRadius * 0.3, height - STACK_BOTTOM_MARGIN) };
   // viewerSeat's own start index sits at trackLength * (viewerSeat / playerCount) before any
   // rotation - angleForTrackIndex already offsets by -PI/2 to put index 0 at the top, so
@@ -105,6 +146,7 @@ export function computeBoardGeometry(
     center,
     trackRadius,
     kennelRadius: trackRadius * KENNEL_RATIO,
+    handCountRadius: trackRadius * HAND_COUNT_RATIO,
     homeRadiusOuter: trackRadius * HOME_OUTER_RATIO,
     homeRadiusStep: trackRadius * HOME_STEP_RATIO,
     stackOffset: trackRadius * STACK_OFFSET_RATIO,
@@ -126,6 +168,15 @@ export function kennelSlotPoint(config: GameConfig, player: PlayerId, slot: numb
   const trackLength = trackLengthFor(config);
   const angle = angleForTrackIndex(startIndexFor(config, player), trackLength, geo.rotation) + (slot - (KENNEL_SIZE - 1) / 2) * 0.2;
   return { x: geo.center.x + Math.cos(angle) * geo.kennelRadius, y: geo.center.y + Math.sin(angle) * geo.kennelRadius };
+}
+
+/** Where an opponent's hand-count badge (OpponentHandCounts.tsx) sits - same start-index
+ * angle as their kennel, but at handCountRadius instead of kennelRadius, so the badge clears
+ * the kennel cluster (and the now-closer-in home markers) instead of sitting on top of it. */
+export function handCountPoint(config: GameConfig, player: PlayerId, geo: BoardGeometry): Point {
+  const trackLength = trackLengthFor(config);
+  const angle = angleForTrackIndex(startIndexFor(config, player), trackLength, geo.rotation);
+  return { x: geo.center.x + Math.cos(angle) * geo.handCountRadius, y: geo.center.y + Math.sin(angle) * geo.handCountRadius };
 }
 
 export function homeSlotPoint(config: GameConfig, player: PlayerId, slot: number, geo: BoardGeometry): Point {

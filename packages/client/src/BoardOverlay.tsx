@@ -35,7 +35,7 @@ interface Props {
   selectedCard: Card | null;
   containerSize: { width: number; height: number };
   onPlay: (player: PlayerId, move: Move) => void;
-  mySeat: PlayerId;
+  viewerSeat: PlayerId;
   /** Fired the moment the player commits to stealing from a specific opponent (tapping their
    * kennel/"red circle"), before they've picked which hand position - see FigureThenMoves'
    * handleFigureClick. Lets GameBoard start the card's fly-to-discard animation right there
@@ -52,7 +52,7 @@ interface Props {
 // game/figureTargets.ts for the two-phase "pick the piece, then pick where it goes" split,
 // game/moveTargets.ts for how a resolved move maps to a board position, and
 // SevenSplitOverlay for the 7's dedicated multi-marble allocator.
-export function BoardOverlay({ state, selectedCard, containerSize, onPlay, mySeat, onCardLeavingHand }: Props) {
+export function BoardOverlay({ state, selectedCard, containerSize, onPlay, viewerSeat, onCardLeavingHand }: Props) {
   const [jokerRank, setJokerRank] = useState<CardRank | 'START' | null>(null);
   // Without this, jokerRank survives past the card that produced it - deselecting the Joker
   // (or any card change at all, including a different player's turn picking a Joker again)
@@ -63,7 +63,7 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay, mySea
   if (!selectedCard || containerSize.width === 0) return null;
 
   const player = state.currentPlayer;
-  const geo = computeBoardGeometry(containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount);
+  const geo = computeBoardGeometry(containerSize.width, containerSize.height, trackLengthFor(state.config), viewerSeat, state.config.playerCount);
   const legalMoves = getLegalMoves(state, player, selectedCard);
 
   if (selectedCard.rank === 'JOKER') {

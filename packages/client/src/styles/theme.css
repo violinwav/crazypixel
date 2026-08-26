@@ -279,36 +279,52 @@ body {
   pointer-events: none;
 }
 
-.opponent-hand-counts__badge {
+/* One of these per card in an opponent's hand (see OpponentHandCounts.tsx), fanned with a
+   small horizontal offset per card - shaped like a tiny playing card (same 5/7 aspect ratio
+   as .playing-card, sharp corners, small drop shadow), same size the old single count badge
+   used, but now there are physically as many of them as there are cards, not a digit to
+   read. */
+.opponent-hand-counts__card {
   position: absolute;
   transform: translate(-50%, -50%);
-  min-width: 20px;
-  height: 20px;
-  padding: 0 4px;
+  width: 18px;
+  aspect-ratio: 5 / 7;
+  height: auto;
+  border-radius: 2px;
+  background: var(--bg-deep);
+  border: 2px solid var(--ink);
+  box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
-  background: var(--bg-deep);
-  border: 2px solid var(--ink);
-  color: var(--ink);
-  font-family: var(--cp-font-display);
-  font-size: 9px;
 }
 
-/* Pass-hand fallback anchors to the draw/discard stack (see BoardStatus.tsx) - the turn
-   label itself lives outside the board now, right above the hand panel (see .turn-label). */
+/* Count readout, only on the topmost (last-drawn) card of the fan - lets the actual number
+   still be read at a glance without going back to a single numbered badge for every card. */
+.opponent-hand-counts__count {
+  font-family: var(--cp-font-display);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--ink);
+}
+
+/* Pass-hand fallback anchors between the discard pile and the ring's bottom edge (see
+   BoardStatus.tsx) - the turn label itself lives outside the board now, right above the hand
+   panel (see .turn-label). */
 .board-status__pass {
   position: absolute;
   transform: translate(-50%, -50%);
   font-size: 0.8rem;
   padding: 0.5em 1em;
-  max-width: min(80vw, 220px);
-  white-space: normal;
-  text-align: center;
-  line-height: 1.3;
+  white-space: nowrap;
   pointer-events: auto;
   z-index: 10;
+  /* iOS Safari can spend up to ~300ms deciding whether a tap is the first half of a double-
+     tap-to-zoom before committing it as a click - manipulation tells it this element never
+     needs that gesture, so a single tap here always registers immediately. Confirmed absent
+     project-wide (grepped theme.css) even though this is exactly the kind of isolated,
+     easy-to-double-tap-by-accident control it matters most for. */
+  touch-action: manipulation;
 }
 
 /* Overlays the top edge of the hand panel (see .hand-panel-slot's position:relative) rather
@@ -370,7 +386,7 @@ body {
 .turn-timer__fill {
   height: 100%;
   background: var(--ink);
-  transition: width 200ms linear;
+  transition: width 200ms linear, background-color 200ms linear;
 }
 
 /* The actual tap target for a move's landing square - a small animated ring, not a filled
@@ -737,6 +753,10 @@ canvas {
   pointer-events: none;
   width: 100%;
   height: 100%;
+  /* Crossfades the visible/color prop changes (PixelDither.tsx) - opacity toggling on whose
+     turn it is, or the color shift as GameBoard's current player changes, should read as a
+     transition, not a hard cut. */
+  transition: opacity 300ms ease;
 }
 
 .app-content {

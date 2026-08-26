@@ -18,7 +18,14 @@ interface Props {
   colorSeats?: 'all' | number;
 }
 
-const PLAYER_COUNTS: GameConfig['playerCount'][] = [2, 4, 6];
+const PLAYER_COUNTS: GameConfig['playerCount'][] = [2, 3, 4, 6];
+
+/** Teams needs an even seat count so every player has exactly one partner directly across
+ * the table (see partnerOf in constants.ts) - 2 is its own degenerate case (your only
+ * opponent would also be your "partner"), 3 has no symmetric partner at all. */
+function teamsAvailable(playerCount: GameConfig['playerCount']): boolean {
+  return playerCount >= 4 && playerCount % 2 === 0;
+}
 
 // Hues (0-359) spread evenly around the wheel, one seed per seat - a reasonable starting
 // point that keeps every seat visibly distinct before anyone touches a slider. Colors are
@@ -34,9 +41,7 @@ export function PlayerSetupPicker({ value, onChange, colorSeats = 'all' }: Props
   const { playerCount, mode } = config;
 
   const handlePlayerCount = (count: GameConfig['playerCount']) => {
-    // Partner offset is playerCount/2 - with only 2 seats that's each player's *only*
-    // opponent, a degenerate "partner", so teams isn't a real option at 2.
-    onChange({ config: { playerCount: count, mode: count === 2 ? 'ffa' : mode }, colors: defaultColors(count) });
+    onChange({ config: { playerCount: count, mode: teamsAvailable(count) ? mode : 'ffa' }, colors: defaultColors(count) });
   };
 
   const handleMode = (nextMode: GameMode) => {
@@ -85,15 +90,15 @@ export function PlayerSetupPicker({ value, onChange, colorSeats = 'all' }: Props
             type="button"
             className="cp-button lobby__choice"
             aria-pressed={mode === 'teams'}
-            disabled={playerCount === 2}
+            disabled={!teamsAvailable(playerCount)}
             onClick={() => handleMode('teams')}
           >
             Partners
           </button>
         </div>
         <p className="lobby__hint">
-          {playerCount === 2
-            ? 'Teams need 4 or 6 players.'
+          {!teamsAvailable(playerCount)
+            ? 'Teams need an even number of players, 4 or 6.'
             : mode === 'teams'
               ? 'Seats across the table team up - every marble home for both partners wins it.'
               : 'Every player for themselves.'}

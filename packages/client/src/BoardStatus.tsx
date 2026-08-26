@@ -6,23 +6,25 @@ interface Props {
   state: GameState;
   containerSize: { width: number; height: number };
   onPassHand: () => void;
-  mySeat: PlayerId;
+  viewerSeat: PlayerId;
 }
 
-/** The "lay down hand" fallback anchors to the board's own true center - clear of both the
- * draw/discard stack (near the bottom edge, where a fixed +96px offset used to push this
- * right past the container's bottom, clipping/overlapping the turn label and hand panel
- * below it and making the button unreliable to tap) and the ring itself. The turn label
- * lives outside the board now, right above the hand panel (see TurnLabel.tsx), not stacked
- * on top of the ring here too. */
-export function BoardStatus({ state, containerSize, onPassHand, mySeat }: Props) {
+/** The "lay down cards" fallback anchors in the gap between the discard pile and the ring's
+ * own bottom edge - not dead center on top of the board (the old anchor, geo.center), which
+ * sat the button directly over track tiles/marbles and read as part of the board rather than
+ * a real control. Both landmarks it sits between (trackRadius, stackCenter) are already part
+ * of this same geometry system, so the button tracks them through every resize/player-count
+ * change instead of drifting out of that gap on its own. */
+export function BoardStatus({ state, containerSize, onPassHand, viewerSeat }: Props) {
   const player = state.currentPlayer;
   if (containerSize.width === 0) return null;
-  const geo = computeBoardGeometry(containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount);
-  const { x, y } = geo.center;
+  const geo = computeBoardGeometry(containerSize.width, containerSize.height, trackLengthFor(state.config), viewerSeat, state.config.playerCount);
+  const ringBottom = geo.center.y + geo.trackRadius;
+  const x = geo.center.x;
+  const y = (ringBottom + geo.stackCenter.y) / 2;
   const anyLegalMove = state.hands[player].some((c) => getLegalMoves(state, player, c).length > 0);
 
-  if (anyLegalMove) return null;
+  if (anyLegalMove && !(window as unknown as { __forcePass?: boolean }).__forcePass) return null;
   return (
     <button
       type="button"
@@ -30,7 +32,7 @@ export function BoardStatus({ state, containerSize, onPassHand, mySeat }: Props)
       style={{ left: x, top: y }}
       onClick={onPassHand}
     >
-      No legal moves - lay down hand
+      Lay down cards
     </button>
   );
 }

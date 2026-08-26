@@ -18,6 +18,12 @@ import { DealAnimation } from './DealAnimation';
 import type { DealPlan } from './DealAnimation';
 import { WinScreen } from './WinScreen';
 import { playerLabel } from './game/playerName';
+import { hueToCss } from './game/color';
+
+export interface BoardBackground {
+  visible: boolean;
+  color: string;
+}
 
 interface Props {
   state: GameState;
@@ -26,6 +32,13 @@ interface Props {
   restart?: () => void;
   lastPlanRef: MutableRefObject<TurnAnimation>;
   mySeat: PlayerId;
+  /** Which seat's base renders at the bottom of the ring - see boardLayout.ts's
+   * BoardGeometry.rotation. Defaults to mySeat, which is what online play always wants (a
+   * fixed seat for the whole session, so this is a no-op there). Local hotseat explicitly
+   * passes a fixed seat instead (see GameView.tsx) - mySeat tracks state.currentPlayer
+   * there, and re-rotating the whole board every turn read as disorienting rather than
+   * helpful, per direct feedback. */
+  viewerSeat?: PlayerId;
   colors: number[];
   /** Display names by seat - online only (see OnlineSession.playerNames). undefined for
    * local hotseat, which has no display-name concept (everyone shares one screen); falls
@@ -35,9 +48,17 @@ interface Props {
    * useOnlineGameState.ts). undefined for local hotseat, which has no server to enforce a
    * timeout and so shows no timer at all. */
   turnDeadline?: number;
+  /** Reports the app-wide pixel-dither background (see App.tsx/PixelDither.tsx) this board
+   * wants while it's active - visible only on the viewer's own turn (in local hotseat that's
+   * every turn, since mySeat always equals state.currentPlayer there), tinted the current
+   * player's own color. A side effect, not a return value, since the background lives above
+   * GameBoard in the tree (App.tsx owns the single shared PixelDither instance). */
+  onBackgroundChange?: (background: BoardBackground) => void;
 }
 
-export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, mySeat, colors, playerNames, turnDeadline }: Props) {
+export function GameBoard({
+  state, play, passCurrentHand, restart, lastPlanRef, mySeat, viewerSeat = mySeat, colors, playerNames, turnDeadline, onBackgroundChange,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const handPanelRef = useRef<HTMLDivElement>(null);
   const bridgeRef = useRef<PhaserBridge | null>(null);
@@ -72,12 +93,22 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
 
   useEffect(() => {
     // Before setGameState - viewerSeat has to be current before the render it drives (see
-    // PhaserGame.ts's pushState ordering). mySeat changes turn to turn in local hotseat (it's
-    // always state.currentPlayer there), fixed for the whole session online - either way this
-    // re-rotates the board to keep mySeat's base at the bottom, "my base always faces me."
-    bridgeRef.current?.setViewerSeat(mySeat);
+    // PhaserGame.ts's pushState ordering).
+    bridgeRef.current?.setViewerSeat(viewerSeat);
     bridgeRef.current?.setGameState(state, lastPlanRef.current);
-  }, [state, lastPlanRef, mySeat]);
+  }, [state, lastPlanRef, viewerSeat]);
+
+  useEffect(() => {
+    // colors[mySeat], not colors[state.currentPlayer] - the two are equal at the instant
+    // this becomes visible (isMyTurn means state.currentPlayer === mySeat), but diverge the
+    // instant a turn passes to someone else, and mySeat is the one that stays constant while
+    // this fades out (a bug caught live: using state.currentPlayer here made the background
+    // visibly jump to the *next* player's color mid-fade, right before disappearing, since
+    // that value updates in the same tick the turn changes, ahead of the opacity crossfade
+    // actually finishing). A player should only ever see their own color animate, never a
+    // glimpse of whoever's turn it's becoming.
+    onBackgroundChange?.({ visible: isMyTurn, color: hueToCss(colors[mySeat]) });
+  }, [isMyTurn, colors, mySeat, onBackgroundChange]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -96,7 +127,7 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
     if (!containerRef.current || !handPanelRef.current || containerSize.width === 0) return;
     dealtRoundRef.current = state.roundIndex;
     const geo = computeBoardGeometry(
-      containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
+      containerSize.width, containerSize.height, trackLengthFor(state.config), viewerSeat, state.config.playerCount,
     );
     const containerRect = containerRef.current.getBoundingClientRect();
     const deckPoint = drawPileCenter(geo);
@@ -127,7 +158,7 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
     const fromRect = cardEl.getBoundingClientRect();
     const containerRect = containerEl.getBoundingClientRect();
     const geo = computeBoardGeometry(
-      containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
+      containerSize.width, containerSize.height, trackLengthFor(state.config), viewerSeat, state.config.playerCount,
     );
     const dest = discardPileCenter(geo);
     setFlight({
@@ -173,7 +204,7 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
     const handRect = handEl.getBoundingClientRect();
     const containerRect = containerEl.getBoundingClientRect();
     const geo = computeBoardGeometry(
-      containerSize.width, containerSize.height, trackLengthFor(state.config), mySeat, state.config.playerCount,
+      containerSize.width, containerSize.height, trackLengthFor(state.config), viewerSeat, state.config.playerCount,
     );
     // The stolen card's own DOM position is long gone by the time this runs (state already
     // updated) - the hand panel's own center stands in as "somewhere in my hand" instead,
@@ -184,7 +215,7 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
       from: { x: handRect.left + handRect.width / 2 - 40, y: handRect.top, width: 80, height: handRect.height },
       to: { x: containerRect.left + geo.center.x, y: containerRect.top + geo.center.y },
     });
-  }, [state, mySeat, containerSize]);
+  }, [state, mySeat, viewerSeat, containerSize]);
 
   return (
     <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -195,18 +226,24 @@ export function GameBoard({ state, play, passCurrentHand, restart, lastPlanRef, 
         aria-label={`Game board. ${playerLabel(playerNames, state.currentPlayer)}'s turn.`}
         style={{ flex: 1, minHeight: 0, position: 'relative' }}
       >
-        <OpponentHandCounts state={state} containerSize={containerSize} mySeat={mySeat} playerNames={playerNames} />
+        <OpponentHandCounts
+          state={state}
+          containerSize={containerSize}
+          mySeat={mySeat}
+          viewerSeat={viewerSeat}
+          playerNames={playerNames}
+        />
         {isMyTurn && (
           <BoardOverlay
             state={state}
             selectedCard={selectedCard}
             containerSize={containerSize}
             onPlay={handlePlay}
-            mySeat={mySeat}
+            viewerSeat={viewerSeat}
             onCardLeavingHand={handleCardLeavingHand}
           />
         )}
-        {isMyTurn && <BoardStatus state={state} containerSize={containerSize} onPassHand={passCurrentHand} mySeat={mySeat} />}
+        {isMyTurn && <BoardStatus state={state} containerSize={containerSize} onPassHand={passCurrentHand} viewerSeat={viewerSeat} />}
       </div>
       {/* Board state changes are driven from here, not narrated by the canvas itself - the
           canvas has no way to expose that to assistive tech, this text does. */}
