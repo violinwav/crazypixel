@@ -133,7 +133,13 @@ export function GameBoard({
     const deckPoint = drawPileCenter(geo);
     const handRect = handPanelRef.current.getBoundingClientRect();
     setDealPlan({
-      cards: state.hands[state.currentPlayer],
+      // mySeat, not state.currentPlayer - this same effect fires for every client on every
+      // new round (deal is round-based, not turn-based), and state.currentPlayer is
+      // whoever's turn happens to open the round, which is only "my" seat sometimes. Using
+      // it here flew and flipped-to-reveal a DIFFERENT player's real hand on-screen before
+      // the real HandPanel (always state.hands[mySeat], see below) snapped in and replaced
+      // it - a real card-visibility leak in online play, not just a visual glitch.
+      cards: state.hands[mySeat],
       from: { x: containerRect.left + deckPoint.x, y: containerRect.top + deckPoint.y },
       to: { x: handRect.left, y: handRect.top + handRect.height / 2, width: handRect.width },
     });

@@ -24,6 +24,13 @@ export interface Marble {
   id: string;
   owner: PlayerId;
   location: MarbleLocation;
+  /** Has this marble, since it was last sent to the kennel, ever landed exactly on its own
+   * start square (via completing a forward lap, or the backward-4 house rule)? That's what
+   * actually grants "the right to enter home" a real board game gives you there - see
+   * planMovement's atEntrance check in GameEngine.ts. A marble freshly placed by
+   * startMarble sits on that same square with this still false; only a move that lands it
+   * there counts. */
+  hasLapped: boolean;
 }
 
 export type GamePhase = 'dealing' | 'cardPass' | 'playing' | 'roundEnd' | 'gameEnd';

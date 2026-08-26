@@ -36,7 +36,7 @@ export function createInitialState(config: GameConfig): GameState {
   const marbles: Marble[] = [];
   for (const player of activePlayerIds(config)) {
     for (let slot = 0; slot < KENNEL_SIZE; slot++) {
-      marbles.push({ id: `p${player}-m${slot}`, owner: player, location: { zone: 'kennel', index: slot } });
+      marbles.push({ id: `p${player}-m${slot}`, owner: player, location: { zone: 'kennel', index: slot }, hasLapped: false });
     }
   }
   return {
@@ -156,6 +156,9 @@ function sendToKennel(state: GameState, marble: Marble): void {
   let slot = 0;
   while (occupied.has(slot)) slot++;
   marble.location = { zone: 'kennel', index: slot };
+  // A captured marble starts completely over - any lap it had already banked is gone, it
+  // has to earn the right to enter home again from scratch next time it's out.
+  marble.hasLapped = false;
 }
 
 /**
@@ -192,11 +195,12 @@ export interface MovementPlan {
  * movement wraps past trackLength-1) - it never enters home by itself, no matter how far
  * back it goes or whether it passes the marble's own start square along the way. House rule
  * text: landing exactly on your own start square by going backward earns the *right* to
- * enter home without doing the full lap - but that's a later, separate forward move
- * crossing the start square, handled by the ordinary forward-entry branch above. This
- * function doesn't need to track that eligibility itself; it falls out for free; once a
- * backward walk lands a marble anywhere, a later forward move behaves exactly as it always
- * has, and "how far around the lap" that marble already was makes no difference to it.
+ * enter home without doing the full lap - that's tracked via marble.hasLapped (set by
+ * moveWithLandingCapture/moveWithPassOverCapture whenever a move lands a marble exactly on
+ * its own start square, forward or backward alike), which is what lets the atEntrance check
+ * below tell "just sitting on lapPos 0 because it was only just placed there by
+ * startMarble" apart from "sitting on lapPos 0 because it already earned this" - position
+ * alone can't tell those two apart, since they're the same square.
  *
  * Exported (not just an internal legality-check helper) so the client can preview the same
  * authoritative path for move highlighting and descriptions, instead of a second,
@@ -217,14 +221,28 @@ export function planMovement(state: GameState, marble: Marble, steps: number): M
 
   const startIndex = startIndexFor(config, marble.owner);
   const lapPos = ((marble.location.index - startIndex) % trackLength + trackLength) % trackLength;
-  const newLapPos = lapPos + steps;
+  // Sitting exactly on the start square (lapPos 0) with hasLapped already true means this
+  // marble is parked right at its own entrance, ready to turn in on this very move - not
+  // "about to start a fresh lap from scratch". Treating that as lapPos === trackLength
+  // (rather than 0) is what makes a small card immediately usable to enter home from here,
+  // instead of demanding an entire extra lap before the crossing check below can ever fire.
+  const atEntrance = lapPos === 0 && marble.hasLapped;
+  const effectiveLapPos = atEntrance ? trackLength : lapPos;
+  const newLapPos = effectiveLapPos + steps;
 
   if (newLapPos > trackLength) {
-    const stepsToStart = trackLength - lapPos;
     const homeSlot = newLapPos - trackLength - 1;
-    const legal = homeSlot < HOME_STRETCH_LENGTH;
-    const trackPassed = pathIndices(marble.location.index, stepsToStart, trackLength);
-    return { location: legal ? { zone: 'home', index: homeSlot } : marble.location, trackPassed, legal };
+    if (homeSlot < HOME_STRETCH_LENGTH) {
+      const stepsToStart = trackLength - effectiveLapPos;
+      const trackPassed = pathIndices(marble.location.index, stepsToStart, trackLength);
+      return { location: { zone: 'home', index: homeSlot }, trackPassed, legal: true };
+    }
+    // Card's too big to land exactly inside the goal - house rule (matches the real board
+    // game): the marble isn't blocked, it just keeps walking the main track past its own
+    // entrance instead, same as the plain forward case below. This is the *only* thing that
+    // changes turn to turn about a marble sitting right at its own entrance - every later
+    // approach re-runs this same exact-fit check from scratch, so a smaller card on some
+    // future turn can still bring it home.
   }
 
   const trackPassed = pathIndices(marble.location.index, steps, trackLength);
@@ -504,6 +522,18 @@ function applyEffect(state: GameState, player: PlayerId, move: Move): void {
   }
 }
 
+/** Landing exactly on your own start square - forward (completed a lap) or backward (the
+ * 4's house rule) - earns marble.hasLapped, which is what lets planMovement's atEntrance
+ * check treat a later move from that same square as "ready to turn in" instead of "owes a
+ * full lap first". Both real movement functions below call this after placing the marble,
+ * not planMovement itself - planMovement is also used for pure move-preview/highlighting,
+ * which must never have side effects on the real state. */
+function markLappedIfAtOwnStart(state: GameState, marble: Marble): void {
+  if (marble.location.zone === 'track' && marble.location.index === startIndexFor(state.config, marble.owner)) {
+    marble.hasLapped = true;
+  }
+}
+
 function moveWithLandingCapture(state: GameState, marble: Marble, steps: number): void {
   const plan = planMovement(state, marble, steps);
   if (!plan.legal) return; // shouldn't happen if getLegalMoves gated this correctly
@@ -514,6 +544,7 @@ function moveWithLandingCapture(state: GameState, marble: Marble, steps: number)
   // Entering home is never a capture - each player's home stretch is private to them,
   // nothing else can ever be sitting there to bump.
   marble.location = plan.location;
+  markLappedIfAtOwnStart(state, marble);
 }
 
 /** The 7 additionally burns any marble it hops over along the way, not just the landing
@@ -526,6 +557,7 @@ function moveWithPassOverCapture(state: GameState, marble: Marble, steps: number
     if (occupant && occupant.id !== marble.id) sendToKennel(state, occupant);
   }
   marble.location = plan.location;
+  markLappedIfAtOwnStart(state, marble);
 }
 
 /** A player (ffa) or both members of a team (teams) win the instant every one of their
