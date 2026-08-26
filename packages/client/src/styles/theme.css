@@ -327,6 +327,21 @@ body {
   touch-action: manipulation;
 }
 
+/* .cp-button:active's own translate(3px, 3px) "pressed" nudge (further up this file) would
+   otherwise completely REPLACE this button's translate(-50%, -50%) centering, not add to it -
+   CSS transform isn't cumulative across separate rules, and .cp-button:active wins the
+   cascade on specificity alone regardless of source order. That silently un-centers the
+   button the instant it's pressed (a jump of roughly half its own width/height, not a subtle
+   3px nudge - it snaps to being positioned as if `left`/`top` were its top-left corner
+   instead of its center), which is also exactly why only taps landing on the side the button
+   jumps *toward* still register: the box moves out from under a touch that started anywhere
+   else before touchend's hit-test runs. Re-stating both transforms together here (higher
+   specificity than plain .cp-button:active - two classes instead of one) keeps the press
+   nudge purely additive to the existing centering instead of replacing it. */
+.cp-button.board-status__pass:active {
+  transform: translate(calc(-50% + 3px), calc(-50% + 3px));
+}
+
 /* Overlays the top edge of the hand panel (see .hand-panel-slot's position:relative) rather
    than sitting in normal flow above it - "more on top of the cards" per feedback. Needs its
    own outline (not just --ink-dim) since it now sits over unpredictable card art instead of

@@ -18,7 +18,7 @@ const MAX_SIZE_POLL_ATTEMPTS = 60; // 3s worst case - generous for any real layo
 function pollForRealSize(game: Phaser.Game, parent: HTMLElement, attemptsLeft: number) {
   const { width, height } = parent.getBoundingClientRect();
   if (width > 0 && height > 0) {
-    game.scale.resize(width, height);
+    game.scale.setParentSize(width, height);
     return;
   }
   if (attemptsLeft <= 0) return; // give up - the ResizeObserver below remains as a backstop
@@ -56,10 +56,19 @@ export function createPhaserGame(parent: HTMLElement): PhaserBridge {
   // those timing assumptions.
   pollForRealSize(game, parent, MAX_SIZE_POLL_ATTEMPTS);
 
-  // Backstop for *later* real resizes (window resize, orientation change).
+  // Backstop for *later* real resizes (window resize, orientation change). Deliberately
+  // setParentSize(), not resize() - in RESIZE scale mode, ScaleManager's own refresh() cycle
+  // (which Phaser's *own* window resize/orientationchange listeners also trigger, same as
+  // this observer) re-derives canvas size from its internally cached parentSize, not from
+  // whatever resize()'s arguments were (confirmed in ScaleManager's own source -
+  // updateScale()'s RESIZE-mode branch reads this.parentSize unconditionally). resize()
+  // still visibly "works" in the moment it's called, but a subsequent refresh triggered by
+  // anything else - Phaser's own listeners included - can silently re-derive from the stale
+  // parentSize and undo it. setParentSize() updates that cache directly, so it stays correct
+  // through any later refresh, not just this one call.
   const resizeObserver = new ResizeObserver(() => {
     const { width, height } = parent.getBoundingClientRect();
-    if (width > 0 && height > 0) game.scale.resize(width, height);
+    if (width > 0 && height > 0) game.scale.setParentSize(width, height);
   });
   resizeObserver.observe(parent);
   game.events.once('destroy', () => resizeObserver.disconnect());

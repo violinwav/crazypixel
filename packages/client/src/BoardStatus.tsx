@@ -24,7 +24,7 @@ export function BoardStatus({ state, containerSize, onPassHand, viewerSeat }: Pr
   const y = (ringBottom + geo.stackCenter.y) / 2;
   const anyLegalMove = state.hands[player].some((c) => getLegalMoves(state, player, c).length > 0);
 
-  if (anyLegalMove && !(window as unknown as { __forcePass?: boolean }).__forcePass) return null;
+  if (anyLegalMove) return null;
   return (
     <button
       type="button"
