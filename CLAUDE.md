@@ -10,6 +10,20 @@ Monorepo: `packages/shared` (rules engine) → `packages/client` (React + Phaser
 `packages/server` (Colyseus, runs real networked multiplayer). Local hotseat play and
 online multiplayer (host/join by room code) both work today - see Architecture below.
 
+## Design Context
+
+(Full version in `.impeccable.md`, kept for the `impeccable` skill family.)
+
+- **Users**: small friend groups, hotseat on one device or remote via room code, often on
+  phones — the pregame menu is frequently one-handed while a friend reads out a code.
+- **Personality**: retro-arcade terminal. Blocky, monochrome UI chrome (color is reserved
+  for cards and marbles, never decoration) — booting into a cabinet, not a modern app.
+- **Font**: single family throughout — **Departure Mono** (`public/fonts/`, SIL OFL),
+  replacing the old Press Start 2P / Pixelify Sans pairing. One face carries title, body,
+  and buttons; hierarchy comes from size/weight/spacing, not a second font.
+- **Anti-reference**: generic SaaS dashboards, glassmorphism, gradient text — none of it
+  fits a terminal/arcade voice.
+
 ## Architecture
 
 - **`packages/shared`** is the single source of truth for every rule. Pure TypeScript, no

@@ -38,9 +38,12 @@ export type GamePhase = 'dealing' | 'cardPass' | 'playing' | 'roundEnd' | 'gameE
 export type GameMode = 'ffa' | 'teams';
 
 export interface GameConfig {
-  /** 3 is ffa-only - odd counts have no symmetric partner to pair with (see partnerOf in
-   * constants.ts), enforced client-side (PlayerSetupPicker.tsx locks Partners out for it). */
-  playerCount: 2 | 3 | 4 | 6;
+  /** 3 and 5 are ffa-only - odd counts have no symmetric partner to pair with (see partnerOf
+   * in constants.ts), enforced client-side (PlayerSetupPicker.tsx locks Partners out for
+   * them) and server-side (GameRoom.ts's handleStartGame). 5 only ever arises from an
+   * online lobby's actual join count - local/singleplayer setup still only offers 2/3/4/6
+   * (PlayerSetupPicker.PLAYER_COUNTS), same as before. */
+  playerCount: 2 | 3 | 4 | 5 | 6;
   mode: GameMode;
 }
 

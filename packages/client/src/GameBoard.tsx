@@ -19,6 +19,14 @@ import type { DealPlan } from './DealAnimation';
 import { WinScreen } from './WinScreen';
 import { playerLabel } from './game/playerName';
 import { hueToCss } from './game/color';
+import { PixelDither } from './PixelDither';
+
+// Matches .hand-panel's own top/bottom padding asymmetry in theme.css (28px vs 8px, an extra
+// 20px split evenly around dead-center) - the real hand cards sit this far below the true
+// vertical center of the hand-panel-slot rect, so anything animating a card to/from "the
+// hand" has to aim here too, not at handRect's own geometric center, or it lands/departs
+// looking offset from where the real cards actually are the instant the animation hands off.
+const HAND_CARDS_CENTER_OFFSET = 10;
 
 export interface BoardBackground {
   visible: boolean;
@@ -141,7 +149,7 @@ export function GameBoard({
       // it - a real card-visibility leak in online play, not just a visual glitch.
       cards: state.hands[mySeat],
       from: { x: containerRect.left + deckPoint.x, y: containerRect.top + deckPoint.y },
-      to: { x: handRect.left, y: handRect.top + handRect.height / 2, width: handRect.width },
+      to: { x: handRect.left, y: handRect.top + handRect.height / 2 + HAND_CARDS_CENTER_OFFSET, width: handRect.width },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.roundIndex, containerSize]);
@@ -218,7 +226,12 @@ export function GameBoard({
     // card-to-discard flight simultaneous with the thief's own animation on their screen.
     setStolenFlight({
       card: stolenCard,
-      from: { x: handRect.left + handRect.width / 2 - 40, y: handRect.top, width: 80, height: handRect.height },
+      from: {
+        x: handRect.left + handRect.width / 2 - 40,
+        y: handRect.top + HAND_CARDS_CENTER_OFFSET,
+        width: 80,
+        height: handRect.height,
+      },
       to: { x: containerRect.left + geo.center.x, y: containerRect.top + geo.center.y },
     });
   }, [state, mySeat, viewerSeat, containerSize]);
@@ -256,16 +269,28 @@ export function GameBoard({
       <p aria-live="polite" className="visually-hidden">
         {lastMoveAnnouncement} {turnAnnouncement}
       </p>
-      <div ref={handPanelRef} className="hand-panel-slot" style={{ opacity: dealPlan ? 0 : 1 }}>
-        <TurnLabel player={state.currentPlayer} playerNames={playerNames} />
-        {turnDeadline !== undefined && <TurnTimerBar deadline={turnDeadline} />}
-        <HandPanel
-          state={state}
-          player={mySeat}
-          interactive={isMyTurn}
-          selectedCardId={selectedCardId}
-          onSelectCard={setSelectedCardId}
-        />
+      <div ref={handPanelRef} className="hand-panel-slot">
+        {/* Same vivid dither look as the menu background (denser, brighter, multi-level),
+            just tinted to your own seat color instead of white - the app-wide background
+            behind the board itself stays the calmer single-tone look; this is scoped to just
+            the hand area, a second independent PixelDither instance rather than changing the
+            shared one App.tsx owns. Deliberately OUTSIDE the opacity toggle just below - it
+            used to sit inside it (hidden along with the cards during the deal), which meant
+            the plainer app-wide background showed through here for the whole deal animation
+            and only switched to this one once the deal finished, reading as "the old
+            background" hanging around during a load rather than a real fix. */}
+        <PixelDither vivid color={hueToCss(colors[mySeat])} className="hand-panel__background" />
+        <div style={{ opacity: dealPlan ? 0 : 1 }}>
+          <TurnLabel player={state.currentPlayer} playerNames={playerNames} />
+          {turnDeadline !== undefined && <TurnTimerBar deadline={turnDeadline} />}
+          <HandPanel
+            state={state}
+            player={mySeat}
+            interactive={isMyTurn}
+            selectedCardId={selectedCardId}
+            onSelectCard={setSelectedCardId}
+          />
+        </div>
       </div>
       {flight && <FlyingCard plan={flight} onDone={() => setFlight(null)} />}
       {stolenFlight && <FlyingCard plan={stolenFlight} onDone={() => setStolenFlight(null)} />}

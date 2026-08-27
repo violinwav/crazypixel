@@ -1,6 +1,6 @@
 import { partnerOf } from '@crazypixel/shared';
 import type { GameConfig, GameMode, PlayerId } from '@crazypixel/shared';
-import { ColorSlider } from './ColorSlider';
+import { MarbleColorPicker } from './MarbleColorPicker';
 
 export interface PlayerSetup {
   config: GameConfig;
@@ -10,12 +10,6 @@ export interface PlayerSetup {
 interface Props {
   value: PlayerSetup;
   onChange: (setup: PlayerSetup) => void;
-  /** Which seat(s) this picker's Colors section lets you change. 'all' (default) is the
-   * local-hotseat case - one person sets every seat's color before play starts. A seat
-   * index is the online-host case - only the host's own seat exists pre-creation, everyone
-   * else picks their own color after joining (see OnlineLobby's WaitingRoom), so there's
-   * nothing for the host to set on their behalf here. */
-  colorSeats?: 'all' | number;
 }
 
 const PLAYER_COUNTS: GameConfig['playerCount'][] = [2, 3, 4, 6];
@@ -36,7 +30,7 @@ export function defaultColors(count: number): number[] {
   return Array.from({ length: count }, (_, i) => Math.round((360 / count) * i));
 }
 
-export function PlayerSetupPicker({ value, onChange, colorSeats = 'all' }: Props) {
+export function PlayerSetupPicker({ value, onChange }: Props) {
   const { config, colors } = value;
   const { playerCount, mode } = config;
 
@@ -59,7 +53,7 @@ export function PlayerSetupPicker({ value, onChange, colorSeats = 'all' }: Props
   return (
     <>
       <section className="cp-panel lobby__section">
-        <h2 className="lobby__heading">Players</h2>
+        <h2 className="lobby__heading">Player Count</h2>
         <div role="group" aria-label="Player count" className="lobby__choices">
           {PLAYER_COUNTS.map((count) => (
             <button
@@ -106,22 +100,21 @@ export function PlayerSetupPicker({ value, onChange, colorSeats = 'all' }: Props
       </section>
 
       <section className="cp-panel lobby__section">
-        <h2 className="lobby__heading">{colorSeats === 'all' ? 'Colors' : 'Your Color'}</h2>
+        <h2 className="lobby__heading">Players</h2>
         <div className="lobby__seats">
-          {(colorSeats === 'all' ? seats : [colorSeats]).map((seat) => {
-            const partner = colorSeats === 'all' && mode === 'teams' ? partnerOf(config, seat as PlayerId) : null;
+          {seats.map((seat) => {
+            const partner = mode === 'teams' ? partnerOf(config, seat as PlayerId) : null;
             return (
               <div key={seat} className="lobby__seat">
-                {colorSeats === 'all' && (
-                  <span className="lobby__seat-label">
-                    Player {seat + 1}
-                    {partner !== null && <span className="lobby__seat-partner"> · partners P{partner + 1}</span>}
-                  </span>
-                )}
-                <ColorSlider
-                  label={colorSeats === 'all' ? `Player ${seat + 1} color` : 'Color'}
-                  value={colors[seat]}
+                <span className="lobby__seat-label">
+                  Player {seat + 1}
+                  {partner !== null && <span className="lobby__seat-partner"> · partners P{partner + 1}</span>}
+                </span>
+                <MarbleColorPicker
+                  label={`Player ${seat + 1} color`}
+                  hue={colors[seat]}
                   onChange={(hue) => handleColorPick(seat, hue)}
+                  align="end"
                 />
               </div>
             );

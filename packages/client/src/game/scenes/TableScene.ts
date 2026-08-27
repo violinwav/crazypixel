@@ -15,19 +15,65 @@ import type { CardDrawAnimation, MarbleAnimation, TurnAnimation } from '../anima
 // Reference sizes at the desktop-tuned 220px track radius - scaled by REFERENCE below so
 // pieces/cards shrink proportionally on a narrow phone viewport instead of overlapping.
 const REFERENCE_TRACK_RADIUS = 220;
+// Phaser draws its own canvas text independent of CSS - theme.css's --cp-font-display var
+// swap doesn't reach here, so this has to be kept in sync by hand.
+const FONT_FAMILY = '"Departure Mono"';
 const MARBLE_SIZE = 24;
 // Matches the DOM hand card's aspect ratio (150x210, see theme.css's .playing-card) - one
 // consistent card shape everywhere it appears, not a separately-tuned board version.
 const CARD_WIDTH = 80;
 const CARD_HEIGHT = 112;
 const GOAL_TILE_SIZE = 14;
-// Was 24 (marker sized double the marble itself, extending 12px past its edge on every
-// side) - a loose enough glow to visibly spill past its own kennel tile onto neighboring
-// board space instead of reading as clearly bound to the tile it's marking.
-const CURRENT_PLAYER_MARKER_PADDING = 8;
-const MOVE_TWEEN_MS = 350;
+// Fixed screen px, matching PixelDither.tsx's own `vivid` (hand-panel background) CELL - one
+// shared grid/clock/algorithm, not a second differently-scaled animation. The texture this
+// draws into spans the whole board (see drawTurnGlow), and every player's reveal samples the
+// *same* grid at their own kennel position, rather than each getting its own resized canvas.
+const TURN_GLOW_CELL = 8;
+// Of geo.trackRadius, not a fixed px - the reveal's radius should track the kennel cluster's
+// own scale same as everything else board-relative, even though the grid it samples (above)
+// stays fixed. Deliberately generous (bigger than the gap between kennelRadius and
+// trackRadius) - the hard ring cutoff below trims whatever part of the circle would dip past
+// the ring on the inward side, which is the point (see feedback: don't bleed under the track
+// or goal tiles), while the outward/lateral sides stay a full, soft circle.
+const TURN_GLOW_RADIUS_RATIO = 0.42;
+// Inside this fraction of the radius the dither stays at full strength; beyond it, alpha
+// ramps down to 0 at the rim - "a circle with faded borders", not a radial gradient from the
+// center outward.
+const TURN_GLOW_CORE_RATIO = 0.55;
+// Crossfade duration for the reveal moving to a new player - "fade out for one player, fade
+// in for the next", not the instant reposition/recolor this used to do.
+const TURN_GLOW_FADE_MS = 500;
+// Same 4x4 Bayer matrix, noise function, and vivid-mode alpha banding as PixelDither.tsx -
+// duplicated rather than imported (that file is a React component, not a shared util, and
+// this project already duplicates small per-file-tuned constants like this on purpose - see
+// boardLayout.ts's REFERENCE_TRACK_LENGTH), but kept numerically identical on purpose so this
+// genuinely reads as "the same dither animation", just windowed, colored, and local.
+const TURN_GLOW_BAYER = [
+  [0, 8, 2, 10],
+  [12, 4, 14, 6],
+  [3, 11, 1, 9],
+  [15, 7, 13, 5],
+];
+const TURN_GLOW_LEVELS = [0.08, 0.2, 0.32, 0.46, 0.6];
+function turnGlowNoise(cx: number, cy: number, t: number): number {
+  const a = Math.sin(cx * 0.12 + t) * Math.sin(cy * 0.1 - t * 0.7);
+  const b = Math.sin((cx + cy) * 0.05 - t * 0.4);
+  return (a * 0.6 + b * 0.4 + 1) * 0.5;
+}
+function turnGlowBand(v: number, cx: number, cy: number): number {
+  const scaled = v * TURN_GLOW_LEVELS.length;
+  const base = Math.floor(scaled);
+  const frac = scaled - base;
+  const bayerThreshold = TURN_GLOW_BAYER[cy % 4][cx % 4] / 16;
+  const level = frac > bayerThreshold ? base + 1 : base;
+  return TURN_GLOW_LEVELS[Math.max(0, Math.min(TURN_GLOW_LEVELS.length - 1, level))];
+}
+// Was 350/90 - a multi-square move (WALK_STEP_MS per square) stacked up fast, and even a
+// single direct tween (MOVE_TWEEN_MS - kennel->start, captures, card flights) read as
+// sluggish next to everything else in the app's now-snappier terminal motion vocabulary.
+const MOVE_TWEEN_MS = 220;
 const POP_IN_MS = 250;
-const WALK_STEP_MS = 90;
+const WALK_STEP_MS = 55;
 // Track tile sprite pixel size is fixed regardless of player count, but tile *count* scales
 // with it (more players = more, smaller-arc slots around the same-ish ring) - rendering
 // tiles at their full native size left them touching/overlapping, worse the more players
@@ -66,13 +112,26 @@ const REFERENCE_TRACK_LENGTH = 48;
 // that's a viewport change, not a game move, and shouldn't play a movement animation.
 export class TableScene extends Phaser.Scene {
   private state: GameState | null = null;
+  private glowLayer?: Phaser.GameObjects.Container;
+  /** Offscreen canvas drawTurnGlow paints into every frame (see update()) - a live-updating
+   * texture (CanvasTexture + refresh()), not a new addCanvas call per frame, which is the
+   * idiomatic Phaser way to redraw the same raw pixels repeatedly. Sized to the whole board
+   * (kept in sync with this.scale in drawTurnGlow) - one shared surface every reveal samples
+   * from, not a separate canvas per player. Displayed via glowImage. */
+  private glowTexture?: Phaser.Textures.CanvasTexture;
+  private glowImage?: Phaser.GameObjects.Image;
+  private glowTime = 0;
+  /** Usually one entry (the current player); briefly two during a turn-change crossfade -
+   * see syncTurnGlow. Each tween's own `alpha` (0..1) is read directly by drawTurnGlow, not
+   * re-derived from anything else. */
+  private glowReveals: { player: PlayerId; alpha: number }[] = [];
+  /** Lets syncTurnGlow tell "still this player's turn, just re-rendering" apart from "turn
+   * actually changed", since setGameState fires on every move, not just ones that hand the
+   * turn to someone else (e.g. a 7-split plays several moves in one turn) - re-triggering the
+   * crossfade on every render would restart it constantly instead of firing once per real
+   * turn change. */
+  private lastGlowPlayer: PlayerId | null = null;
   private boardLayer?: Phaser.GameObjects.Container;
-  private currentPlayerMarkers: Phaser.GameObjects.Rectangle[] = [];
-  /** Whose kennel currentPlayerMarkers is currently showing (or fading into) - lets
-   * updateCurrentPlayerHighlight tell "still this player's turn, just re-rendering" apart
-   * from "turn actually changed", since setGameState fires on every move, not just ones that
-   * hand the turn to someone else (e.g. a 7-split plays several moves in one turn). */
-  private highlightedPlayer: PlayerId | null = null;
   private decorLayer?: Phaser.GameObjects.Container;
   private marbleLayer?: Phaser.GameObjects.Container;
   private titleText?: Phaser.GameObjects.Text;
@@ -114,13 +173,23 @@ export class TableScene extends Phaser.Scene {
 
   create() {
     this.titleText = this.add
-      .text(0, 36, 'CRAZYPIXEL', { fontFamily: '"Press Start 2P"', fontSize: '20px', color: '#ffffff' })
+      .text(0, 36, 'CRAZYPIXEL', { fontFamily: FONT_FAMILY, fontSize: '20px', color: '#ffffff' })
       .setOrigin(0.5);
+    // Added before boardLayer - Phaser draws containers in add-order, so the glow paints
+    // first and the board's own tiles paint over it, only showing past a tile's own edges.
+    // A separate DOM layer behind the canvas can't achieve this: PhaserGame.ts's Game config
+    // sets a `backgroundColor` with no `transparent: true`, so this canvas paints fully
+    // opaque every frame (confirmed live - nothing placed behind it in the DOM ever showed
+    // through, at any z-index), which only leaves "inside this same canvas, earlier in the
+    // draw order" as an actual option.
+    this.glowLayer = this.add.container(0, 0);
+    // 1x1 placeholder - real size isn't known until the first drawTurnGlow call (this.scale
+    // is frequently still 0x0 at this exact boot instant, same 0x0-at-boot race PhaserGame.ts
+    // already has to poll around), which resizes it to match this.scale the moment it is.
+    this.glowTexture = this.textures.createCanvas('turn-glow', 1, 1) ?? undefined;
+    this.glowImage = this.add.image(0, 0, 'turn-glow').setOrigin(0, 0);
+    this.glowLayer.add(this.glowImage);
     this.boardLayer = this.add.container(0, 0);
-    // currentPlayerMarkers (4 small squares tracing the active player's kennel arc) are
-    // created fresh by updateCurrentPlayerHighlight, not here - see that method for why they
-    // fade in/out at a fixed spot per player rather than persisting and tweening position
-    // between kennels.
     this.decorLayer = this.add.container(0, 0);
     this.marbleLayer = this.add.container(0, 0);
 
@@ -245,6 +314,121 @@ export class TableScene extends Phaser.Scene {
     });
   }
 
+  /** Starts a crossfade to whoever's turn it now is, called from renderPieces on every
+   * render - a no-op unless the current player actually changed since last time (setGameState
+   * fires on every move, not just ones that hand the turn to someone else). The outgoing
+   * reveal tweens out and removes itself; the incoming one tweens in - "fade out for one
+   * player, fade in for the next", not the instant reposition/recolor this used to do. */
+  private syncTurnGlow() {
+    if (!this.state) return;
+    const player = this.state.currentPlayer;
+    if (this.lastGlowPlayer === player) return;
+    this.lastGlowPlayer = player;
+
+    this.glowReveals.forEach((reveal) => {
+      this.tweens.killTweensOf(reveal);
+      this.tweens.add({
+        targets: reveal,
+        alpha: 0,
+        duration: TURN_GLOW_FADE_MS,
+        ease: 'Sine.easeOut',
+        onComplete: () => {
+          this.glowReveals = this.glowReveals.filter((r) => r !== reveal);
+        },
+      });
+    });
+
+    const incoming = { player, alpha: 0 };
+    this.glowReveals.push(incoming);
+    this.tweens.add({ targets: incoming, alpha: 1, duration: TURN_GLOW_FADE_MS, ease: 'Sine.easeIn' });
+  }
+
+  /** Redraws the turn-glow canvas texture every frame (see update()) with the same
+   * Bayer-dithered noise pattern and vivid-mode alpha banding PixelDither.tsx uses for the
+   * hand-panel background (TURN_GLOW_BAYER/turnGlowNoise/turnGlowBand above) - one shared
+   * grid and clock spanning the whole board, not a separate differently-sized canvas
+   * recomputed per player. Each active reveal (see glowReveals/syncTurnGlow) just windows
+   * into that same grid at its own kennel position, tinted to its own player's color, with a
+   * soft-edged circular falloff (TURN_GLOW_CORE_RATIO keeps the inner disc at full strength,
+   * fading only the outer band - "faded borders", not a gradient from the center).
+   *
+   * distFromBoardCenter <= trackRadius is a hard cutoff, independent of the reveal's own
+   * radius: kennels sit *outside* the ring (kennelRadius > trackRadius - see
+   * boardLayout.ts's KENNEL_RATIO) and every goal/home-stretch tile sits *inside* it
+   * (homeRadiusOuter < trackRadius), so excluding anything at or inside the ring itself
+   * guarantees the glow never bleeds under either the track or the goal tiles, regardless of
+   * how generous TURN_GLOW_RADIUS_RATIO is - a clean cut at the board's own boundary, not a
+   * softer radius tuned to just barely avoid it.
+   *
+   * Only clears/redraws the small bounding box around each active reveal, not the whole
+   * texture - reveals are static for as long as it's still that player's turn (kennelSlotPoint
+   * only moves on a resize or a local-hotseat rotation snap), so there's nothing stale left
+   * behind by re-clearing just this frame's own draw area every time. */
+  private drawTurnGlow() {
+    if (!this.state || !this.glowTexture || !this.glowImage) return;
+    const { width, height } = this.scale;
+    if (width === 0 || height === 0) return;
+
+    if (this.glowTexture.width !== width || this.glowTexture.height !== height) {
+      this.glowTexture.setSize(width, height);
+      this.glowImage.setDisplaySize(width, height);
+    }
+
+    const config = this.state.config;
+    const ctx = this.glowTexture.context;
+    const radius = this.geo.trackRadius * TURN_GLOW_RADIUS_RATIO;
+    const coreRadius = radius * TURN_GLOW_CORE_RATIO;
+    const pad = radius + TURN_GLOW_CELL;
+
+    for (const reveal of this.glowReveals) {
+      const center = kennelSlotPoint(config, reveal.player, (KENNEL_SIZE - 1) / 2, this.geo);
+      ctx.clearRect(center.x - pad, center.y - pad, pad * 2, pad * 2);
+    }
+
+    for (const reveal of this.glowReveals) {
+      if (reveal.alpha <= 0.01) continue;
+      const center = kennelSlotPoint(config, reveal.player, (KENNEL_SIZE - 1) / 2, this.geo);
+      const hex = hueToHex(this.colorAssignment[reveal.player]);
+      const r = (hex >> 16) & 0xff;
+      const g = (hex >> 8) & 0xff;
+      const b = hex & 0xff;
+
+      const minCx = Math.max(0, Math.floor((center.x - radius) / TURN_GLOW_CELL));
+      const maxCx = Math.min(Math.ceil(width / TURN_GLOW_CELL), Math.ceil((center.x + radius) / TURN_GLOW_CELL));
+      const minCy = Math.max(0, Math.floor((center.y - radius) / TURN_GLOW_CELL));
+      const maxCy = Math.min(Math.ceil(height / TURN_GLOW_CELL), Math.ceil((center.y + radius) / TURN_GLOW_CELL));
+
+      for (let cy = minCy; cy < maxCy; cy++) {
+        for (let cx = minCx; cx < maxCx; cx++) {
+          const px = (cx + 0.5) * TURN_GLOW_CELL;
+          const py = (cy + 0.5) * TURN_GLOW_CELL;
+          const distFromBoardCenter = Math.hypot(px - this.geo.center.x, py - this.geo.center.y);
+          if (distFromBoardCenter <= this.geo.trackRadius) continue;
+
+          const dist = Math.hypot(px - center.x, py - center.y);
+          if (dist > radius) continue;
+          const fade = dist <= coreRadius ? 1 : 1 - (dist - coreRadius) / (radius - coreRadius);
+
+          const v = turnGlowNoise(cx, cy, this.glowTime);
+          const alpha = turnGlowBand(v, cx, cy) * fade * reveal.alpha;
+          if (alpha <= 0.01) continue;
+          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+          ctx.fillRect(cx * TURN_GLOW_CELL, cy * TURN_GLOW_CELL, TURN_GLOW_CELL - 1, TURN_GLOW_CELL - 1);
+        }
+      }
+    }
+    this.glowTexture.refresh();
+  }
+
+  /** Phaser calls this every frame automatically (it's a reserved Scene method name) - the
+   * one exception to this file's usual "pure renderer driven by setGameState()" shape (see
+   * the class doc comment above), needed here because a live dither pattern is continuous
+   * motion, not a state transition Phaser's tween system can animate between two values. */
+  update(_time: number, delta: number) {
+    this.glowTime += delta / 1000;
+    this.drawTurnGlow();
+  }
+
   private renderPieces(animate: boolean) {
     if (!this.state || !this.marbleLayer) return;
     const { width, height } = this.scale;
@@ -257,9 +441,9 @@ export class TableScene extends Phaser.Scene {
     this.titleText?.setPosition(this.geo.center.x, 36);
     // Cheap enough to redraw every render (a turn-based game, not a twitch one) - simpler
     // than tracking whether state.config actually changed since the last call.
+    this.syncTurnGlow();
     this.redrawBoard();
     this.updateMarbles(animate);
-    this.updateCurrentPlayerHighlight(animate);
     this.updateDecor();
   }
 
@@ -414,71 +598,6 @@ export class TableScene extends Phaser.Scene {
     this.drawDiscardStack();
   }
 
-  /** Draws 4 small squares snugly ringing the active player's own 4 base marbles, tracing
-   * the kennel's natural arc instead of one loose rectangle bounding the whole cluster. On an
-   * actual turn change, the outgoing player's squares fade out in place and the new player's
-   * fade in in place - no sliding across the board between kennels, since the "whose base is
-   * this" question a moving highlight answers ambiguously mid-slide is exactly what a
-   * fixed-position crossfade avoids. A resize/re-layout still snaps instantly (animate=false),
-   * same reasoning as marble positions - it's not a game move. */
-  private updateCurrentPlayerHighlight(animate: boolean) {
-    if (!this.state) return;
-    const config = this.state.config;
-    const player = this.state.currentPlayer;
-    const size = (MARBLE_SIZE + CURRENT_PLAYER_MARKER_PADDING) * this.pieceScale;
-    const color = hueToHex(this.colorAssignment[player]);
-
-    // setGameState fires on every move, not just ones that hand the turn to someone else
-    // (e.g. a 7-split plays several moves in one turn) - only actually cross-fade when the
-    // highlighted player is really changing, otherwise just keep the existing squares
-    // in sync (color/size, in case colors loaded late; position, in case of a resize).
-    if (this.highlightedPlayer === player && this.currentPlayerMarkers.length > 0) {
-      this.currentPlayerMarkers.forEach((marker, slot) => {
-        const { x, y } = kennelSlotPoint(config, player, slot, this.geo);
-        marker.setFillStyle(color, 0.22);
-        marker.setStrokeStyle(3, color, 1);
-        marker.setSize(size, size);
-        marker.setPosition(x, y);
-      });
-      return;
-    }
-
-    if (this.currentPlayerMarkers.length > 0) {
-      const outgoing = this.currentPlayerMarkers;
-      if (animate) {
-        outgoing.forEach((marker) => {
-          this.tweens.killTweensOf(marker);
-          this.tweens.add({
-            targets: marker, alpha: 0, duration: MOVE_TWEEN_MS, ease: 'Cubic.easeOut', onComplete: () => marker.destroy(),
-          });
-        });
-      } else {
-        outgoing.forEach((marker) => marker.destroy());
-      }
-    }
-
-    this.currentPlayerMarkers = Array.from({ length: KENNEL_SIZE }, (_, slot) => {
-      const { x, y } = kennelSlotPoint(config, player, slot, this.geo);
-      const marker = this.add.rectangle(x, y, size, size, color, 0.22).setStrokeStyle(3, color, 1);
-      if (animate) {
-        marker.setAlpha(0);
-        this.tweens.add({
-          targets: marker,
-          alpha: 1,
-          duration: MOVE_TWEEN_MS,
-          ease: 'Cubic.easeIn',
-          onComplete: () => {
-            this.tweens.add({ targets: marker, alpha: 0.4, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-          },
-        });
-      } else {
-        this.tweens.add({ targets: marker, alpha: 0.4, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-      }
-      return marker;
-    });
-    this.highlightedPlayer = player;
-  }
-
   private drawDeckStack() {
     const { x, y } = drawPileCenter(this.geo);
     const scale = this.pieceScale;
@@ -512,7 +631,9 @@ export class TableScene extends Phaser.Scene {
     face.add(
       this.add
         .text(0, 0, card.rank, {
-          fontFamily: '"Press Start 2P"', fontSize: `${16 * scale}px`, color: '#ffffff', stroke: '#000000', strokeThickness: 4,
+          // 20, not the old 16 - Departure Mono's glyphs sit visibly smaller than Press
+          // Start 2P's bitmap letterforms did at the same nominal size.
+          fontFamily: FONT_FAMILY, fontSize: `${20 * scale}px`, color: '#ffffff', stroke: '#000000', strokeThickness: 4,
         })
         .setOrigin(0.5),
     );

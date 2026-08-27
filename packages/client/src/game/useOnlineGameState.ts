@@ -24,7 +24,7 @@ export function useOnlineGameState(room: Room<RoomState>) {
     };
     room.onStateChange(applyStateJson);
     // No unsubscribe - this hook lives for the whole online game session, same lifecycle
-    // convention as GameView's Phaser instance and OnlineLobby's WaitingRoom listener.
+    // convention as GameView's Phaser instance and WaitingRoom.tsx's own listener.
   }, [room]);
 
   const play = useCallback((player: PlayerId, move: Move) => {

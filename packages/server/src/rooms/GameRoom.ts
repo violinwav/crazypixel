@@ -7,6 +7,16 @@ import {
 import type { GameConfig, GameMode, GameState, Move, PlayerId } from '@crazypixel/shared';
 
 const TURN_MS = 20_000;
+// The shared engine's board layout is generic to any player count (see boardLayout.ts's
+// computeBoardGeometry - plain division/trig, no per-count branching), so an online lobby
+// doesn't need to fix a target headcount up front the way local hotseat does: it just
+// accepts joins up to this cap and starts with however many are actually seated.
+const MAX_PLAYERS = 6;
+const MIN_PLAYERS = 2;
+
+function isValidHue(hue: unknown): hue is number {
+  return typeof hue === 'number' && Number.isInteger(hue) && hue >= 0 && hue < 360;
+}
 
 /**
  * Networked room state kept deliberately thin - the actual GameState (marbles/hands/piles/
@@ -17,7 +27,6 @@ const TURN_MS = 20_000;
  */
 class RoomState extends Schema {
   @type('string') phase: 'waiting' | 'playing' = 'waiting';
-  @type('number') playerCount = 4;
   @type('string') mode: GameMode = 'ffa';
   @type(['number']) colors = new ArraySchema<number>();
   @type(['string']) seatSessionIds = new ArraySchema<string>();
@@ -33,9 +42,8 @@ class RoomState extends Schema {
 }
 
 interface CreateOptions {
-  playerCount: GameConfig['playerCount'];
   mode: GameMode;
-  hostHue: number;
+  hue: number;
 }
 
 interface PlayMessage {
@@ -48,17 +56,7 @@ interface SetColorMessage {
 
 interface JoinOptions {
   displayName: string;
-}
-
-/** Seat 0 (the host) is the only seat that exists at room creation, so it's the only one
- * that can arrive with a chosen hue - every other seat defaults to an evenly-spread hue
- * (same spread as the client's defaultColors, PlayerSetupPicker.tsx) and picks its real
- * color after joining, via handleSetColor. Color is a continuous hue now, not a pick from a
- * fixed palette, so unlike the old version there's no need to keep hues distinct/unique. */
-function seedColors(playerCount: number, hostHue: number): number[] {
-  const colors = Array.from({ length: playerCount }, (_, i) => Math.round((360 / playerCount) * i));
-  colors[0] = hostHue;
-  return colors;
+  hue: number;
 }
 
 // In-process registry of codes currently in use, so two simultaneously-open rooms can't
@@ -98,9 +96,8 @@ export class GameRoom extends Room<RoomState> {
   private turnTimeout: Delayed | null = null;
 
   async onCreate(options: CreateOptions) {
-    this.maxClients = options.playerCount;
+    this.maxClients = MAX_PLAYERS;
     this.setState(new RoomState());
-    this.state.playerCount = options.playerCount;
     this.state.mode = options.mode;
     this.state.code = generateCode();
     // A *top-level* field on the room listing, not this.setMetadata() (which nests under
@@ -110,7 +107,6 @@ export class GameRoom extends Room<RoomState> {
     // metadata wouldn't be found by that match at all.
     this.listing.code = this.state.code;
     await this.listing.save();
-    seedColors(options.playerCount, options.hostHue).forEach((c) => this.state.colors.push(c));
 
     this.onMessage('play', (client, message: PlayMessage) => this.handlePlay(client, message));
     this.onMessage('passHand', (client) => this.handlePassHand(client));
@@ -118,10 +114,25 @@ export class GameRoom extends Room<RoomState> {
     this.onMessage('startGame', (client) => this.handleStartGame(client));
   }
 
+  /** Rejects a join once the game's started - not redundant with maxClients/lock() below.
+   * The old fixed-playerCount design got this for free (maxClients always equalled the
+   * exact seat target, so a full lobby was already unjoinable by the time Start could even
+   * fire); this one's maxClients is a constant cap that's often still short of MAX_PLAYERS
+   * when Start fires (Start only needs MIN_PLAYERS), leaving real open slots a late joiner
+   * could otherwise land in after the engine's already been initialized for a smaller
+   * config.playerCount than their seat index would need. */
+  onAuth(): boolean {
+    return this.state.phase === 'waiting';
+  }
+
   onJoin(client: Client, options: JoinOptions) {
     const seatIndex = this.state.seatSessionIds.length;
     this.state.seatSessionIds.push(client.sessionId);
     this.state.playerNames.push(options.displayName?.trim() || `Player ${seatIndex + 1}`);
+    // Every seat's color is just whatever that player's own profile picked (network.ts
+    // sends `hue` from PlayerIdentity for both create and join) - a stale/buggy client
+    // omitting or mangling it just falls back to 0 rather than crashing the room.
+    this.state.colors.push(isValidHue(options.hue) ? options.hue : 0);
   }
 
   onLeave(client: Client) {
@@ -133,6 +144,11 @@ export class GameRoom extends Room<RoomState> {
     if (index !== -1) {
       this.state.seatSessionIds.splice(index, 1);
       this.state.playerNames.splice(index, 1);
+      // colors now grows one push per onJoin (seat count isn't fixed upfront anymore), so
+      // it has to stay index-aligned with the two arrays above on the way out too - unlike
+      // the old fixed-length-from-creation version, a stale/misaligned entry here would hand
+      // the next joiner someone else's color.
+      this.state.colors.splice(index, 1);
     }
   }
 
@@ -218,31 +234,40 @@ export class GameRoom extends Room<RoomState> {
   /** Only legal pre-game (colors are fixed once play starts, matching how config/mode also
    * can't change mid-game). No uniqueness check - two seats landing on the same or a nearby
    * hue is the players' own choice now that color is continuous, not a fixed 6-entry
-   * palette (see seedColors above). */
+   * palette. Fired by WaitingRoom.tsx's sync effect whenever the player's profile color
+   * changes while they're seated here. */
   private handleSetColor(client: Client, { hue }: SetColorMessage) {
     if (this.state.phase !== 'waiting') return;
-    if (!Number.isInteger(hue) || hue < 0 || hue >= 360) return;
+    if (!isValidHue(hue)) return;
     const seat = this.seatFor(client);
     if (seat === null) return;
 
     this.state.colors[seat] = hue;
   }
 
-  /** Only seat 0 (the host) can start, and only once every seat is filled - re-derived
+  /** Only seat 0 (the host) can start. No fixed target to wait for anymore - just a floor
+   * (MIN_PLAYERS) and, for Partners, the same even-count-of-4-or-6 requirement the local
+   * hotseat lobby enforces (PlayerSetupPicker.tsx's teamsAvailable) - re-derived
    * server-side rather than trusted from the client, same reasoning as every other message
    * here (handlePlay etc.): a stale/buggy client's Start Game button being enabled doesn't
    * mean the server has to believe it. */
   private handleStartGame(client: Client) {
     if (this.state.phase !== 'waiting') return;
     if (this.seatFor(client) !== 0) return;
-    if (this.state.seatSessionIds.length !== this.state.playerCount) return;
+    const count = this.state.seatSessionIds.length;
+    if (count < MIN_PLAYERS) return;
+    if (this.state.mode === 'teams' && (count < 4 || count % 2 !== 0)) return;
 
-    const config: GameConfig = { playerCount: this.state.playerCount as GameConfig['playerCount'], mode: this.state.mode };
+    const config: GameConfig = { playerCount: count as GameConfig['playerCount'], mode: this.state.mode };
     const state = createInitialState(config);
     startGame(state);
     this.gameState = state;
     this.state.phase = 'playing';
     this.state.stateJson = JSON.stringify(state);
     this.scheduleTurnTimeout();
+    // Belt-and-suspenders alongside onAuth's phase check above - takes this room out of
+    // matchmaking's room-listing results too, not just out of reach for a client that
+    // already has the code.
+    void this.lock();
   }
 }

@@ -1,6 +1,5 @@
 import { Client, Room } from 'colyseus.js';
-import type { GameMode } from '@crazypixel/shared';
-import type { PlayerSetup } from '../PlayerSetupPicker';
+import type { GameMode, PlayerId } from '@crazypixel/shared';
 
 // Hardcoding 'localhost' breaks whenever the page isn't loaded from the dev machine itself
 // (LAN IP, or a VS Code/Codespaces forwarded-port tunnel viewed on a phone) - 'localhost'
@@ -35,7 +34,6 @@ const SERVER_URL = resolveServerUrl();
 
 export interface RoomState {
   phase: 'waiting' | 'playing';
-  playerCount: number;
   mode: GameMode;
   colors: number[];
   seatSessionIds: string[];
@@ -48,26 +46,38 @@ export interface RoomState {
   turnDeadline: number;
 }
 
-// Only the host's own seat (colors[0], see PlayerSetupPicker's colorSeats={0} usage in
-// OnlineLobby) is known pre-creation - every other seat picks its own color (a hue, 0-359)
-// after joining, via setSeatColor below, synced server-authoritatively like everything else
-// in this room.
-export function createRoom({ config, colors }: PlayerSetup, displayName: string): Promise<Room<RoomState>> {
+/** What Lobby.tsx hands up to App.tsx once a room's game has actually started - the room
+ * itself plus the viewer's own seat and everyone's starting colors/names, snapshotted at
+ * that moment (App.tsx.OnlineGameView reads the room's live state for everything after). */
+export interface OnlineSession {
+  room: Room<RoomState>;
+  mySeat: PlayerId;
+  colors: number[];
+  playerNames: string[];
+}
+
+interface HostOptions {
+  mode: GameMode;
+  hue: number;
+  displayName: string;
+}
+
+// Every seat's color is just whatever that player's own profile (PlayerIdentity.tsx) has
+// set - sent at join time as `hue` here and in joinRoom below, so there's exactly one place
+// (the profile strip) a player's color ever gets chosen, matching what the roster then
+// shows. No player count here anymore - the room adapts to however many actually join (see
+// GameRoom.ts's MAX_PLAYERS/handleStartGame).
+export function createRoom({ mode, hue, displayName }: HostOptions): Promise<Room<RoomState>> {
   const client = new Client(SERVER_URL);
-  return client.create<RoomState>('game', {
-    playerCount: config.playerCount,
-    mode: config.mode,
-    hostHue: colors[0],
-    displayName,
-  });
+  return client.create<RoomState>('game', { mode, hue, displayName });
 }
 
 // client.join (not joinById) - matches an existing room by metadata via filterBy(['code'])
 // on the server's room definition (index.ts), so this only ever needs the short code the
 // host shared, never colyseus's own long internal room id.
-export function joinRoom(code: string, displayName: string): Promise<Room<RoomState>> {
+export function joinRoom(code: string, displayName: string, hue: number): Promise<Room<RoomState>> {
   const client = new Client(SERVER_URL);
-  return client.join<RoomState>('game', { code: code.trim(), displayName });
+  return client.join<RoomState>('game', { code: code.trim(), displayName, hue });
 }
 
 export function setSeatColor(room: Room<RoomState>, hue: number): void {

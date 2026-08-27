@@ -69,8 +69,7 @@ const HOME_OUTER_RATIO = 190 / REFERENCE_TRACK_RADIUS;
 const HOME_STEP_RATIO = 30 / REFERENCE_TRACK_RADIUS;
 // Opponent hand-count indicator (OpponentHandCounts.tsx - a small fanned stack of card
 // icons, one per card in that opponent's hand) anchors here instead of at kennelRadius, so
-// it clears both the kennel cluster and the current-player glow around it (see
-// TableScene.ts's CURRENT_PLAYER_MARKER_PADDING) without sitting on top of either.
+// it clears the kennel cluster instead of sitting on top of it.
 const HAND_COUNT_RATIO = 310 / REFERENCE_TRACK_RADIUS;
 // Was 42 - at the card's current 80px width (TableScene.ts's CARD_WIDTH) that left barely
 // any gap between the draw and discard piles, closer to touching than two distinct stacks.
@@ -80,9 +79,8 @@ const STACK_OFFSET_RATIO = 65 / REFERENCE_TRACK_RADIUS;
 // that no longer exists), which just ate board space for nothing.
 const TITLE_MARGIN = 16;
 
-// The current-player glow (see TableScene) is centered on the kennel cluster and extends
-// further out than the kennel tiles themselves - without slack, kennels sizing to exactly
-// fill the viewport meant the glow (and the outermost kennel marble) clipped the edge.
+// Without slack, kennels sizing to exactly fill the viewport meant the outermost kennel
+// marble itself clipped the edge.
 const EDGE_SAFETY_FACTOR = 0.82;
 
 /** More players means more track squares on the same-shaped ring - a 6P board (96 squares)

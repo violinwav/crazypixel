@@ -1,7 +1,7 @@
 import { useOnlineGameState } from './game/useOnlineGameState';
 import { GameBoard } from './GameBoard';
 import type { BoardBackground } from './GameBoard';
-import type { OnlineSession } from './OnlineLobby';
+import type { OnlineSession } from './game/network';
 
 interface Props {
   session: OnlineSession;
