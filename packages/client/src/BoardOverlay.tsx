@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import { getLegalMoves } from '@crazypixel/shared';
 import type { Card, CardRank, GameState, Move, PlayerId } from '@crazypixel/shared';
 import { trackLengthFor } from '@crazypixel/shared';
-import { computeBoardGeometry } from './game/boardLayout';
+import { computeBoardGeometry, handCountPoint } from './game/boardLayout';
 import { resolveMoveTargets } from './game/moveTargets';
 import { groupMovesByFigure } from './game/figureTargets';
 import type { Figure } from './game/figureTargets';
@@ -75,12 +75,15 @@ interface Props {
   containerSize: { width: number; height: number };
   onPlay: (player: PlayerId, move: Move) => void;
   viewerSeat: PlayerId;
-  /** Fired the moment the player commits to stealing from a specific opponent (tapping their
-   * kennel/"red circle"), before they've picked which hand position - see FigureThenMoves'
-   * handleFigureClick. Lets GameBoard start the card's fly-to-discard animation right there
-   * instead of waiting for StealCardOverlay's own reveal flight to finish, per feedback that
-   * the card should visually "lay down" at the moment of committing to steal, not after. */
-  onCardLeavingHand: (card: Card) => void;
+  /** Fired when the player picks whose hand to reach into (tapping the red ring around their
+   * cards), before the blind position is chosen. That tap is the point of no return: the
+   * card is spent, it lays down on the discard pile then and there for everyone, and this
+   * overlay offers no way back to a different target or a different card. Everything that
+   * follows is just which position in that hand. */
+  onStealCommit: (card: Card, target: PlayerId) => void;
+  /** Forwarded to StealCardOverlay - fires when a stolen card's reveal is done being held up,
+   * so the hand can open a slot for it to land in. */
+  onStealIncoming: (card: Card) => void;
 }
 
 // Sits absolutely positioned over the Phaser canvas. Selecting a card highlights real board
@@ -91,7 +94,7 @@ interface Props {
 // game/figureTargets.ts for the two-phase "pick the piece, then pick where it goes" split,
 // game/moveTargets.ts for how a resolved move maps to a board position, and
 // SevenSplitOverlay for the 7's dedicated multi-marble allocator.
-export function BoardOverlay({ state, selectedCard, containerSize, onPlay, viewerSeat, onCardLeavingHand }: Props) {
+export function BoardOverlay({ state, selectedCard, containerSize, onPlay, viewerSeat, onStealCommit, onStealIncoming }: Props) {
   const [jokerRank, setJokerRank] = useState<CardRank | 'START' | null>(null);
   // Without this, jokerRank survives past the card that produced it - deselecting the Joker
   // (or any card change at all, including a different player's turn picking a Joker again)
@@ -128,7 +131,8 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay, viewe
         geo={geo}
         player={player}
         onPlay={onPlay}
-        onCardLeavingHand={onCardLeavingHand}
+        onStealCommit={onStealCommit}
+        onStealIncoming={onStealIncoming}
       />
     ) : null;
 
@@ -186,7 +190,8 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay, viewe
           geo={geo}
           player={player}
           onPlay={onPlay}
-          onCardLeavingHand={onCardLeavingHand}
+          onStealCommit={onStealCommit}
+          onStealIncoming={onStealIncoming}
         />
       </>
     );
@@ -200,7 +205,8 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay, viewe
       geo={geo}
       player={player}
       onPlay={onPlay}
-      onCardLeavingHand={onCardLeavingHand}
+      onStealCommit={onStealCommit}
+      onStealIncoming={onStealIncoming}
     />
   );
 }
@@ -211,14 +217,14 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay, viewe
  * one card (an 8 offers "copy the 7" alongside its own plain move-8), so both render at
  * once rather than one replacing the other. The allocator only appears when some legal play
  * genuinely spreads the 7 over multiple marbles - see isMultiMarbleSeven. */
-function MoveRouter({ state, moves, geo, player, onPlay, onCardLeavingHand }: FigureThenMovesProps) {
+function MoveRouter({ state, moves, geo, player, onPlay, onStealCommit, onStealIncoming }: FigureThenMovesProps) {
   const needsAllocator = moves.some(isMultiMarbleSeven);
   const splitMoves = needsAllocator ? moves.filter(isSevenSplitMove) : [];
   const otherMoves = needsAllocator ? moves.filter((m) => !isSevenSplitMove(m)) : moves;
 
   if (splitMoves.length === 0) {
     return (
-      <FigureThenMoves state={state} moves={moves} geo={geo} player={player} onPlay={onPlay} onCardLeavingHand={onCardLeavingHand} />
+      <FigureThenMoves state={state} moves={moves} geo={geo} player={player} onPlay={onPlay} onStealCommit={onStealCommit} onStealIncoming={onStealIncoming} />
     );
   }
 
@@ -228,7 +234,7 @@ function MoveRouter({ state, moves, geo, player, onPlay, onCardLeavingHand }: Fi
         <SevenSplitOverlay state={state} moves={splitMoves} geo={geo} onPlay={onPlay} />
       </div>
       {otherMoves.length > 0 && (
-        <FigureThenMoves state={state} moves={otherMoves} geo={geo} player={player} onPlay={onPlay} onCardLeavingHand={onCardLeavingHand} />
+        <FigureThenMoves state={state} moves={otherMoves} geo={geo} player={player} onPlay={onPlay} onStealCommit={onStealCommit} onStealIncoming={onStealIncoming} />
       )}
     </>
   );
@@ -240,19 +246,24 @@ interface FigureThenMovesProps {
   geo: ReturnType<typeof computeBoardGeometry>;
   player: PlayerId;
   onPlay: Props['onPlay'];
-  onCardLeavingHand: Props['onCardLeavingHand'];
+  onStealCommit: Props['onStealCommit'];
+  onStealIncoming: Props['onStealIncoming'];
 }
 
 /** Two-phase move picker: highlight the pieces that can act (a marble, your base, an
  * opponent's hand for a steal), then - once one is picked - highlight where it can go. The
  * `key` prop callers pass (selectedCard.id / jokerRank) forces a fresh instance whenever the
  * underlying move set changes, so this never carries a stale figure selection across cards. */
-function FigureThenMoves({ state, moves, geo, player, onPlay, onCardLeavingHand }: FigureThenMovesProps) {
+function FigureThenMoves({ state, moves, geo, player, onPlay, onStealCommit, onStealIncoming }: FigureThenMovesProps) {
   const [figureKey, setFigureKey] = useState<string | null>(null);
   const { figures, unresolved } = groupMovesByFigure(state, moves, geo);
   // A single eligible piece is no real choice - skip straight to its moves rather than
-  // forcing a confirm tap on a picker with exactly one option.
-  const activeKey = figureKey ?? (figures.length === 1 ? figures[0].key : null);
+  // forcing a confirm tap on a picker with exactly one option. A lone STEAL target is the one
+  // exception: selecting that figure spends the card irreversibly (see onStealCommit), and an
+  // irreversible commit must never happen on render, only on a real tap - so a steal always
+  // gets its ring tapped even when it's the only thing the card can do.
+  const activeKey = figureKey
+    ?? (figures.length === 1 && !figures[0].key.startsWith('opponent:') ? figures[0].key : null);
   const selected = figures.find((f) => f.key === activeKey) ?? null;
   // React 18 StrictMode double-invokes an effect with no cleanup (mount -> simulated
   // unmount -> mount again) to catch impurity bugs - this one has no cleanup and calls
@@ -293,10 +304,11 @@ function FigureThenMoves({ state, moves, geo, player, onPlay, onCardLeavingHand 
       return;
     }
     // Committing to steal from this opponent is itself the "lay the card down" moment, not
-    // whichever hand position gets tapped next (StealCardOverlay) - see onCardLeavingHand's
-    // own comment on Props.
+    // whichever hand position gets tapped next (StealCardOverlay) - and it's irreversible,
+    // see onStealCommit's own comment on Props. This tap is the only path to it (see
+    // activeKey above), so it fires exactly once and never from a render.
     if (f.key.startsWith('opponent:')) {
-      onCardLeavingHand(f.moves[0].card);
+      onStealCommit(f.moves[0].card, Number(f.key.split(':')[1]) as PlayerId);
     }
     setFigureKey(f.key);
   };
@@ -332,8 +344,22 @@ function FigureThenMoves({ state, moves, geo, player, onPlay, onCardLeavingHand 
   if (selected.key.startsWith('opponent:')) {
     const targetPlayer = Number(selected.key.split(':')[1]) as PlayerId;
     return (
+      // No Back button here, unlike every other figure below - the card was spent when this
+      // target was tapped (see handleFigureClick), so there is nothing to go back to. All
+      // that's left is which position in that hand, and letting the turn clock run out picks
+      // one at random rather than cancelling (see GameRoom.autoPlayTurn).
       <div className="board-overlay">
-        <StealCardOverlay state={state} moves={selected.moves} onPlay={onPlay} forcedTarget={targetPlayer} onBack={goBack} />
+        <StealCardOverlay
+          state={state}
+          moves={selected.moves}
+          onPlay={onPlay}
+          forcedTarget={targetPlayer}
+          // Board-space, not screen-space - StealCardOverlay converts it at click time off
+          // the .board-overlay layer it's rendered inside, which is the element this same
+          // geometry is measured against.
+          targetFanPoint={handCountPoint(state.config, targetPlayer, geo)}
+          onIncoming={onStealIncoming}
+        />
       </div>
     );
   }

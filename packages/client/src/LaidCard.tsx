@@ -1,11 +1,15 @@
 import type { CSSProperties } from 'react';
 import { trackLengthFor } from '@crazypixel/shared';
-import type { GameState, PlayerId } from '@crazypixel/shared';
+import type { Card, GameState, PlayerId } from '@crazypixel/shared';
 import { computeBoardGeometry, discardPileCenter } from './game/boardLayout';
 import { CARD_FACE_SPRITE, handCardWidthFor } from './game/cardArt';
 import { CardRankIndices } from './CardRankIndices';
 
 interface Props {
+  /** The card to show face-up on the pile. Usually state.lastPlayedCard, but a committed
+   * steal lays its card down before the move itself is sent (see GameBoard's
+   * pendingLaidCard) - the caller decides which, this just draws it. */
+  card: Card;
   state: GameState;
   containerSize: { width: number; height: number };
   viewerSeat: PlayerId;
@@ -17,9 +21,8 @@ interface Props {
  * other card on screen uses (HandPanel, FlyingCard, DealAnimation) instead of a separately
  * hand-tuned Phaser canvas font/size that only ever approximated it - one card resource, not
  * two independently-drifting ones. */
-export function LaidCard({ state, containerSize, viewerSeat }: Props) {
-  const card = state.lastPlayedCard;
-  if (!card || containerSize.width === 0) return null;
+export function LaidCard({ card, state, containerSize, viewerSeat }: Props) {
+  if (containerSize.width === 0) return null;
 
   const geo = computeBoardGeometry(
     containerSize.width, containerSize.height, trackLengthFor(state.config), viewerSeat, state.config.playerCount,

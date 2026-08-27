@@ -4,7 +4,7 @@ import { Schema, type, ArraySchema } from '@colyseus/schema';
 import {
   createInitialState, startGame, getLegalMoves, applyMove, advanceTurn, passHand,
 } from '@crazypixel/shared';
-import type { GameConfig, GameMode, GameState, Move, PlayerId } from '@crazypixel/shared';
+import type { Card, GameConfig, GameMode, GameState, Move, PlayerId } from '@crazypixel/shared';
 
 const TURN_MS = 20_000;
 // The shared engine's board layout is generic to any player count (see boardLayout.ts's
@@ -16,6 +16,15 @@ const MIN_PLAYERS = 2;
 
 function isValidHue(hue: unknown): hue is number {
   return typeof hue === 'number' && Number.isInteger(hue) && hue >= 0 && hue < 360;
+}
+
+/** Pierces the wildAs/copyLastCard wrappers down to a forceDraw, mirroring the client's own
+ * unwrapForceDraw (StealCardOverlay.tsx) - a steal can arrive as a bare 2, an 8 copying one,
+ * or a Joker played as one, and autoPlayTurn below has to recognise all three. */
+function forceDrawOf(move: Move): Extract<Move, { kind: 'forceDraw' }> | null {
+  if (move.kind === 'forceDraw') return move;
+  if (move.kind === 'wildAs' || move.kind === 'copyLastCard') return forceDrawOf(move.innerMove);
+  return null;
 }
 
 /**
@@ -52,6 +61,14 @@ interface PlayMessage {
 
 interface SetColorMessage {
   hue: number;
+}
+
+interface StealIntentMessage {
+  targetPlayer: PlayerId;
+  /** The card being spent on the steal - broadcast so every client can lay it on the discard
+   * pile immediately (see GameBoard's pendingLaidCard), and kept server-side so a timeout
+   * finishes the steal the player already committed to. */
+  card: Card;
 }
 
 interface JoinOptions {
@@ -94,6 +111,11 @@ function generateCode(): string {
 export class GameRoom extends Room<RoomState> {
   private gameState: GameState | null = null;
   private turnTimeout: Delayed | null = null;
+  /** Set once the current player commits to stealing from someone (see handleStealIntent).
+   * Picking a target is final - the client offers no way back - so this is what makes the
+   * turn clock honour that decision instead of auto-playing something else entirely. Cleared
+   * on every commitTurn, so it can never outlive the turn that set it. */
+  private pendingSteal: { seat: PlayerId; targetPlayer: PlayerId; cardId: string } | null = null;
 
   async onCreate(options: CreateOptions) {
     this.maxClients = MAX_PLAYERS;
@@ -113,6 +135,7 @@ export class GameRoom extends Room<RoomState> {
     this.onMessage('setColor', (client, message: SetColorMessage) => this.handleSetColor(client, message));
     this.onMessage('startGame', (client) => this.handleStartGame(client));
     this.onMessage('rematch', (client) => this.handleRematch(client));
+    this.onMessage('stealIntent', (client, message: StealIntentMessage) => this.handleStealIntent(client, message));
   }
 
   /** Rejects a join once the game's started - not redundant with maxClients/lock() below.
@@ -172,6 +195,7 @@ export class GameRoom extends Room<RoomState> {
     const next = structuredClone(state);
     mutate(next);
     advanceTurn(next);
+    this.pendingSteal = null;
     this.gameState = next;
     this.state.stateJson = JSON.stringify(next);
     // A finished game gets no new clock. Without this the 20s timer stayed armed after the
@@ -198,14 +222,30 @@ export class GameRoom extends Room<RoomState> {
   /** 20s elapsed with no move from the current player - play the first card in their hand
    * that has any legal move (hand order, not sorted), picking randomly among that card's
    * own legal moves ("random marble"), or pass if nothing in hand is playable. Also what
-   * quietly keeps a game moving when the current seat belongs to a disconnected client. */
+   * quietly keeps a game moving when the current seat belongs to a disconnected client.
+   *
+   * A committed steal (pendingSteal) overrides all of that: the player already chose the
+   * card AND whose hand it reaches into, and only the blind position was left open, so the
+   * clock finishes exactly that steal at a random position rather than throwing the decision
+   * away and playing some unrelated card. Falls through to the ordinary path if that steal
+   * somehow isn't legal any more, so a stale intent can never wedge a turn. */
   private autoPlayTurn() {
     const state = this.gameState;
     if (!state || this.state.phase !== 'playing') return;
     const seat = state.currentPlayer;
 
     let chosen: Move | null = null;
+    const pending = this.pendingSteal;
+    if (pending && pending.seat === seat) {
+      const card = state.hands[seat].find((c) => c.id === pending.cardId);
+      const steals = card
+        ? getLegalMoves(state, seat, card).filter((m) => forceDrawOf(m)?.targetPlayer === pending.targetPlayer)
+        : [];
+      if (steals.length > 0) chosen = steals[Math.floor(Math.random() * steals.length)];
+    }
+
     for (const card of state.hands[seat]) {
+      if (chosen) break;
       const legal = getLegalMoves(state, seat, card);
       if (legal.length > 0) {
         chosen = legal[Math.floor(Math.random() * legal.length)];
@@ -217,6 +257,45 @@ export class GameRoom extends Room<RoomState> {
       if (chosen) applyMove(next, seat, chosen);
       else passHand(next, seat);
     });
+  }
+
+  /** Purely cosmetic side-channel: "the player whose turn it is has picked whose hand to
+   * reach into, but hasn't committed to a card yet." Broadcast so the *target* can be warned
+   * before it happens (see GameBoard.tsx's steal alert) - the pick itself is local UI state
+   * on the thief's client (BoardOverlay's figure-select step), so without this nobody else
+   * would ever hear about it.
+   *
+   * Deliberately NOT part of RoomState/stateJson: that's committed game state, and a
+   * transient "I'm hovering over you" flag living there would show up in every client's
+   * before/after diff (the exact input planCaptures and GameBoard's steal detection run on)
+   * as a state change with no move behind it. Broadcast messages are the right shape for
+   * something with no persistence at all. There's no matching "clear" broadcast either -
+   * clients drop the intent on their own the moment any new stateJson arrives (the turn
+   * moved on), which is race-free in a way a second broadcast racing the state patch isn't.
+   *
+   * Validated as far as "it's your turn, that's a real other seat, and you actually hold
+   * that card" - deliberately not re-deriving whether a forceDraw against that target is
+   * legal, which would mean a full getLegalMoves sweep of the sender's whole hand (7-splits
+   * included) on every tap. The card check is what matters for the two real effects here:
+   * every client lays that card on the discard pile on the strength of this message, and
+   * autoPlayTurn will try to finish the steal with it. handlePlay still re-derives full
+   * legality when the move itself lands, so nothing here can produce an illegal play.
+   *
+   * There's no retract - once a target is picked the decision is final by design, and
+   * accepting a "never mind" would also hand a client a way to dodge the timeout steal
+   * autoPlayTurn is holding it to. pendingSteal is only ever cleared by commitTurn. */
+  private handleStealIntent(client: Client, { targetPlayer, card }: StealIntentMessage) {
+    const state = this.gameState;
+    if (!state || this.state.phase !== 'playing') return;
+    const seat = this.seatFor(client);
+    if (seat === null || seat !== state.currentPlayer) return;
+    const isRealOpponent = Number.isInteger(targetPlayer)
+      && targetPlayer >= 0 && targetPlayer < state.config.playerCount && targetPlayer !== seat;
+    if (!isRealOpponent) return;
+    if (!card || !state.hands[seat].some((c) => c.id === card.id)) return;
+
+    this.pendingSteal = { seat, targetPlayer, cardId: card.id };
+    this.broadcast('stealIntent', { by: seat, target: targetPlayer, card });
   }
 
   private handlePlay(client: Client, { move }: PlayMessage) {

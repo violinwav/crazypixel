@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GameState, Move, PlayerId } from '@crazypixel/shared';
+import type { Card, GameState, Move, PlayerId } from '@crazypixel/shared';
 import type { Room } from 'colyseus.js';
-import { requestRematch } from './network';
-import type { RoomState } from './network';
+import { requestRematch, sendStealIntent } from './network';
+import type { RoomState, StealIntentMessage } from './network';
 import { EMPTY_TURN_ANIMATION, planCaptures } from './animationPlan';
 import type { TurnAnimation } from './animationPlan';
 
@@ -25,6 +25,9 @@ export function useOnlineGameState(room: Room<RoomState>) {
   // overwrite the plan the first run just built - the flash would never fire.
   const prevStateRef = useRef<GameState>(state);
   const prevJsonRef = useRef<string>(room.state.stateJson);
+  // "Someone has singled out a hand to steal from, but hasn't committed to a card yet" -
+  // ephemeral, broadcast-only, never part of stateJson (see GameRoom.handleStealIntent).
+  const [stealIntent, setStealIntent] = useState<StealIntentMessage | null>(null);
 
   useEffect(() => {
     const applyStateJson = () => {
@@ -46,9 +49,18 @@ export function useOnlineGameState(room: Room<RoomState>) {
       };
       prevStateRef.current = next;
       prevJsonRef.current = room.state.stateJson;
+      // Any new authoritative state means the turn moved on, so whatever the last player was
+      // lining up is over - the steal intent expires here rather than needing its own "clear"
+      // broadcast from the server, which would be racing this very state patch to arrive
+      // first (colyseus makes no ordering guarantee between a broadcast and a state patch
+      // flushed in the same tick). Covers every way an intent can end that isn't the thief
+      // explicitly backing out: the steal committing, a different card being played instead,
+      // and the 20s turn clock auto-playing for a thief who walked away mid-pick.
+      setStealIntent(null);
       setState(next);
     };
     room.onStateChange(applyStateJson);
+    room.onMessage('stealIntent', (message: StealIntentMessage) => setStealIntent(message));
     // No unsubscribe - this hook lives for the whole online game session, same lifecycle
     // convention as GameView's Phaser instance and WaitingRoom.tsx's own listener.
   }, [room]);
@@ -65,5 +77,9 @@ export function useOnlineGameState(room: Room<RoomState>) {
     requestRematch(room);
   }, [room]);
 
-  return { state, play, passCurrentHand, rematch, lastPlanRef, turnDeadline };
+  const announceStealIntent = useCallback((targetPlayer: PlayerId, card: Card) => {
+    sendStealIntent(room, targetPlayer, card);
+  }, [room]);
+
+  return { state, play, passCurrentHand, rematch, lastPlanRef, turnDeadline, stealIntent, announceStealIntent };
 }

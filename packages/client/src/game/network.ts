@@ -1,5 +1,5 @@
 import { Client, Room } from 'colyseus.js';
-import type { GameMode, PlayerId } from '@crazypixel/shared';
+import type { Card, GameMode, PlayerId } from '@crazypixel/shared';
 
 // Hardcoding 'localhost' breaks whenever the page isn't loaded from the dev machine itself
 // (LAN IP, or a VS Code/Codespaces forwarded-port tunnel viewed on a phone) - 'localhost'
@@ -46,6 +46,17 @@ export interface RoomState {
   turnDeadline: number;
 }
 
+/** Broadcast by GameRoom the moment the current player picks whose hand to reach into,
+ * ahead of picking which card - see GameRoom.handleStealIntent. There's no retract: choosing
+ * a target is final, and the intent ends only when the next real GameState arrives. `card`
+ * is the one being spent on the steal, so every client can lay it on the discard pile right
+ * away rather than at the end of the thief's reveal animation. */
+export interface StealIntentMessage {
+  by: PlayerId;
+  target: PlayerId;
+  card: Card;
+}
+
 /** What Lobby.tsx hands up to App.tsx once a room's game has actually started - the room
  * itself plus the viewer's own seat and everyone's starting colors/names, snapshotted at
  * that moment (App.tsx.OnlineGameView reads the room's live state for everything after). */
@@ -86,6 +97,14 @@ export function setSeatColor(room: Room<RoomState>, hue: number): void {
 
 export function startGame(room: Room<RoomState>): void {
   room.send('startGame');
+}
+
+/** Tells everyone else that this client's player has singled out `targetPlayer`'s hand for
+ * a steal, before the blind position is picked. The server keeps it only until the turn
+ * commits (see GameRoom.handleStealIntent) - clients drop it on their own the moment the
+ * next real state arrives (see useOnlineGameState). */
+export function sendStealIntent(room: Room<RoomState>, targetPlayer: PlayerId, card: Card): void {
+  room.send('stealIntent', { targetPlayer, card });
 }
 
 /** Host-only server-side (see GameRoom.handleRematch) - sending this from any other seat is

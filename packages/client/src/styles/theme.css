@@ -28,6 +28,12 @@
   --player-purple: #b967ff;
   --player-orange: #ff9f40;
   --card-red: #d22c50;
+  /* The 2's own card colour (generate-sprites.py's PALETTE["card_2"], where it's named
+     "steal"). Kept in sync by hand with that script and game/theme.ts like every other colour
+     here - see CLAUDE.md's Conventions. Used for the steal's own moment of arrival rather
+     than any player's seat colour: what the ring says is "this is the 2 resolving", and the
+     card it's wrapped around is already the answer to "whose". */
+  --card-steal: #ff2d95;
 
   --focus-ring: var(--ink);
   --focus-ring-buffer: var(--bg-deep);
@@ -53,6 +59,14 @@
   /* Confident, decisive deceleration - no bounce/elastic, matches the terminal/arcade feel
      (blocky and snappy, not a soft consumer-app settle). */
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+
+  /* How far anything pinned to the BOTTOM of .board-overlay has to stay clear of that edge.
+     .turn-label / .turn-timer / .steal-alert hang ~20px above the hand panel now (see
+     .turn-label for why), overhanging the board's own bottom edge, so an overlay sitting at
+     a bare bottom:12px lands directly on that text - confirmed live with the steal picker
+     printing straight through "PLAYER 3'S TURN". One token rather than three separate
+     numbers, so moving that text again only has to be reconciled in one place. */
+  --board-bottom-clearance: 48px;
 }
 
 * {
@@ -239,10 +253,9 @@ body {
   z-index: 0;
   pointer-events: none;
   /* Fades to solid black (.hand-panel-slot's own bg-deep behind it) so the board area above
-     doesn't cut to this dither with a hard, visible seam. Fully resolved (opaque) by 12px -
-     .turn-label/.turn-timer (below) both start below that point now, so the turn text sits
-     entirely on the real colored background, with the fade confined to the strip above it
-     rather than running through the text itself. */
+     doesn't cut to this dither with a hard, visible seam. .turn-label/.turn-timer used to be
+     positioned to clear this fade zone; they've since moved above the panel entirely (see
+     .turn-label), so the whole gradient now belongs to the card row alone. */
   mask-image: linear-gradient(to bottom, transparent 0, #000 200px);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 200px);
   /* Same crossfade as .app-background - GameBoard toggles this canvas's opacity on whose
@@ -387,6 +400,51 @@ body {
   opacity: 0.35;
 }
 
+/* The card an opponent has just taken, still sitting in its old slot while the steal plays
+   out (see HandPanel's stolenGhost / GameBoard's STEAL_MARK_MS). Deliberately the same lift
+   the selected-card state uses ([aria-pressed='true'] above) so it reads with a vocabulary
+   the player already knows - "this specific card is the one in play" - just in red rather
+   than white, since this one is happening TO them rather than by them. Red is not the only
+   cue (position and the alert text above carry it too), so the state isn't lost to anyone
+   who can't distinguish it - WCAG 1.4.1. */
+.hand-panel__card--stolen {
+  outline: 3px solid var(--card-red);
+  outline-offset: 3px;
+  box-shadow: 2px 6px 0 rgba(0, 0, 0, 0.6);
+  /* The lift is an ANIMATION, not the transform + .playing-card's own transform transition
+     it looks like it could be - this element is inserted into the row already marked, and a
+     brand-new DOM node has no previous computed value to transition FROM, so it would just
+     paint lifted on frame one with no motion at all (the same trap .playing-card--dim above
+     documents at length). Animations run on freshly-inserted nodes; transitions don't. The
+     flash waits out the lift, so the two read as one gesture rather than starting together. */
+  animation: stolen-card-mark 220ms var(--ease-out-quart) both,
+    stolen-card-flash 520ms steps(2, end) 220ms infinite;
+  cursor: default;
+}
+
+@keyframes stolen-card-mark {
+  from {
+    transform: translateY(0) scale(1);
+  }
+  to {
+    transform: translateY(-10px) scale(1.06);
+  }
+}
+
+/* Hard two-step alternation rather than a smooth pulse - matches the board's own figure-ring
+   blink and the general blocky/arcade rule (see this file's opening comment) instead of
+   introducing a soft consumer-app breathe. Runs unbounded on purpose, unlike .steal-alert
+   below: the marked card only exists for STEAL_MARK_MS (~1.1s), nowhere near the 5s past
+   which blinking needs a way to be stopped (WCAG 2.2.2). */
+@keyframes stolen-card-flash {
+  0% {
+    outline-color: var(--card-red);
+  }
+  100% {
+    outline-color: var(--ink);
+  }
+}
+
 .playing-card:focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
@@ -460,6 +518,29 @@ body {
   color: var(--ink);
 }
 
+/* One beat as a stolen card lands on this stack (see GameBoard's FAN_POP_MS) - the count
+   itself has already ticked up by the time the flight ends, and a number changing while the
+   eye is following a card across the board is not something anyone notices. Folds the base
+   rule's own translate(-50%, -50%) into every step: that centering is what positions the
+   card at all, and a transform here would otherwise replace it outright and fling the whole
+   fan down-right by half its size (same trap .laid-card's keyframe documents above). */
+@keyframes opponent-fan-pop {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  45% {
+    transform: translate(-50%, -50%) scale(1.35);
+    border-color: var(--card-red);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.opponent-hand-counts__card--pop {
+  animation: opponent-fan-pop 280ms ease-out both;
+}
+
 /* Pass-hand fallback anchors between the discard pile and the ring's bottom edge (see
    BoardStatus.tsx) - the turn label itself lives outside the board now, right above the hand
    panel (see .turn-label). */
@@ -510,9 +591,17 @@ body {
    the plain PixelDither background. Crossfades on change instead of snapping. */
 .turn-label {
   position: absolute;
-  /* Was 2px - now clears .hand-panel__background's fade zone (opaque by 12px), so this text
-     sits on the fully-colored background instead of fading through it. */
-  top: 16px;
+  /* Negative - sits ABOVE .hand-panel-slot entirely, over the board's empty lower margin,
+     not inside the panel's top padding where it used to be. The stolen-card mark
+     (.hand-panel__card--stolen) lifts a card 10px and scales it 1.06, which put its top edge
+     at roughly y=18 inside the panel - straight through where this text and the timer below
+     were sitting. Moving both clear of the card row is what lets that animation (and the
+     transfer flight leaving from it) play over open space instead of through the UI. Costs
+     the text its colored-dither backdrop; the 4-direction text-shadow below already made it
+     legible on unpredictable card art, so it holds up over the board too. Far enough up to
+     clear the marked card with .turn-timer stacked BELOW it too - measured against the
+     lifted card's real top edge (~18px into the panel), not the resting one. */
+  top: -34px;
   left: 0;
   right: 0;
   z-index: 5;
@@ -541,8 +630,9 @@ body {
    "Reversed" loading bar: starts full and shrinks as time runs out, not the other way. */
 .turn-timer {
   position: absolute;
-  /* Was 16px - shifted down the same 14px as .turn-label above, to stay right below it. */
-  top: 30px;
+  /* Keeps the same 14px gap below .turn-label wherever that moves - see its comment above
+     for why both now sit above the panel rather than inside its top padding. */
+  top: -20px;
   left: 8px;
   right: 8px;
   z-index: 5;
@@ -700,7 +790,7 @@ body {
 .board-overlay__fallback {
   position: absolute;
   left: 50%;
-  bottom: 12px;
+  bottom: var(--board-bottom-clearance);
   transform: translateX(-50%);
   display: flex;
   gap: 8px;
@@ -841,7 +931,7 @@ body {
 .rank-picker {
   position: absolute;
   left: 50%;
-  bottom: 12px;
+  bottom: var(--board-bottom-clearance);
   transform: translateX(-50%);
   display: flex;
   flex-wrap: wrap;
@@ -868,7 +958,7 @@ body {
 .steal-overlay {
   position: absolute;
   left: 50%;
-  bottom: 12px;
+  bottom: var(--board-bottom-clearance);
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
@@ -912,6 +1002,94 @@ body {
   padding: 0.4em 0.8em;
   min-width: 0;
   min-height: 0;
+}
+
+/* Takes .turn-label's exact position (the two never render together - see GameBoard) so the
+   line above the hand always holds exactly one message. Colored by the player doing the
+   stealing, matching the hand's own dither behind it - the one place in this otherwise
+   monochrome chrome where a player color is doing the talking, which is what makes "who" the
+   part you register first. Clamped to one line: a display name is whatever a player typed,
+   and this sits over the cards. */
+/* Empty gap held open at the right-hand end of the hand while a stolen card flies home (see
+   HandPanel's incomingSlotWidth). Nothing is drawn in it - the flying card is what the eye
+   follows; this only pushes the row over so there's somewhere for it to land. Width is set
+   inline and transitions from 0, which is what makes the row slide rather than jump. The
+   negative margin cancels .hand-panel__cards' own 8px gap while the slot is still closed, so
+   the row doesn't lurch by a gap's width the instant the slot appears. */
+.hand-panel__slot {
+  flex: 0 0 auto;
+  aspect-ratio: 5 / 7;
+  margin-left: -8px;
+  transition: width 240ms var(--ease-out-quart), margin-left 240ms var(--ease-out-quart);
+}
+
+.hand-panel__slot--open {
+  margin-left: 0;
+}
+
+.steal-alert {
+  position: absolute;
+  /* Same line .turn-label occupies - see its comment on why that's above the panel now. */
+  top: -34px;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  pointer-events: none;
+  margin: 0;
+  padding: 0 8px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--cp-font-display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--steal-alert-color, var(--ink));
+  text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+  /* Blinks while they're still choosing (a threat in progress), then holds steady once the
+     card is actually gone - the state change is itself information: "deciding" vs "done".
+     Bounded to 7 iterations (4.48s), NOT infinite: this state lasts as long as the thief
+     takes to pick a card, which the 20s turn clock caps but doesn't shorten, and content that
+     blinks for more than five seconds has to be stoppable (WCAG 2.2.2). Stopping on its own
+     satisfies that; the alert itself stays on screen afterwards, just steady. The keyframe
+     returns to full opacity at 100% so the resting state after the last iteration is the
+     legible one. */
+  animation: steal-alert-blink 640ms steps(2, end) 7;
+}
+
+.steal-alert--settled {
+  animation: none;
+}
+
+@keyframes steal-alert-blink {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* A card crossing the board from the hand it was taken out of to the stack it now belongs to
+   (see StealTransfer.tsx). The ring is the destination player's color, so the answer to
+   "where is this going" travels with the card instead of only existing once it lands. */
+.steal-transfer {
+  outline: 3px solid var(--steal-transfer-ring, var(--ink));
+  outline-offset: 2px;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.6);
+}
+
+/* The card the thief has just taken, in the air and then held up (StealFlight.tsx). Ringed in
+   the 2's own pink - the card that bought this is lying face-up on the pile in exactly that
+   colour, so the two read as one action. Drawn on the outer flying element rather than either
+   face, so it doesn't rotate away with the flip. */
+.steal-flight {
+  outline: 3px solid var(--card-steal);
+  outline-offset: 3px;
 }
 
 canvas {

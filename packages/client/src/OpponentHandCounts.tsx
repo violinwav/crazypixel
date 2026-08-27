@@ -17,6 +17,19 @@ interface Props {
    * above (they're the same value online, but not in local hotseat). */
   viewerSeat: PlayerId;
   playerNames?: string[];
+  /** Briefly set to the seat a stolen card has just landed on (see GameBoard's FAN_POP_MS) -
+   * the stack itself pops, which is what actually says "that card is theirs now". Without
+   * it the flight ends on a stack that silently grew by one while the eye was following the
+   * card, and the arrival reads as the card just vanishing near them. */
+  poppingSeat?: PlayerId | null;
+  /** A card some seat has committed but the engine hasn't removed from their hand yet - the
+   * 2 of a steal in progress, which is face-up on the discard pile the moment a target is
+   * picked, a whole reveal animation before the move lands (see GameBoard's stealCommit /
+   * stealIntent). Their stack has to shrink at that same moment or it keeps showing a card
+   * everyone can already see lying on the pile. Self-correcting: once the real move commits
+   * the card is genuinely gone from that hand, the id stops matching, and this stops
+   * subtracting - no window where it double-counts. */
+  spentCard?: { seat: PlayerId; cardId: string } | null;
 }
 
 // Horizontal spacing between each fanned card's left edge - tight enough that even the
@@ -32,7 +45,7 @@ const CARD_OFFSET = 7;
  * rotation-aware geometry as everything else on the board (see boardLayout.ts's
  * BoardGeometry.rotation), so a stack tracks its player's kennel correctly no matter which
  * seat is the viewer. */
-export function OpponentHandCounts({ state, containerSize, mySeat, viewerSeat, playerNames }: Props) {
+export function OpponentHandCounts({ state, containerSize, mySeat, viewerSeat, playerNames, poppingSeat, spentCard }: Props) {
   if (containerSize.width === 0) return null;
   const geo = computeBoardGeometry(
     containerSize.width, containerSize.height, trackLengthFor(state.config), viewerSeat, state.config.playerCount,
@@ -51,7 +64,8 @@ export function OpponentHandCounts({ state, containerSize, mySeat, viewerSeat, p
         const angle = Math.atan2(y - geo.center.y, x - geo.center.x) + Math.PI / 2;
         const dx = Math.cos(angle);
         const dy = Math.sin(angle);
-        const count = state.hands[p].length;
+        const spent = spentCard?.seat === p && state.hands[p].some((c) => c.id === spentCard.cardId) ? 1 : 0;
+        const count = state.hands[p].length - spent;
         const label = `${playerLabel(playerNames, p)} has ${count} card${count === 1 ? '' : 's'}`;
         return (
           <div key={p} role="img" aria-label={label}>
@@ -61,7 +75,7 @@ export function OpponentHandCounts({ state, containerSize, mySeat, viewerSeat, p
               return (
                 <span
                   key={i}
-                  className="opponent-hand-counts__card"
+                  className={`opponent-hand-counts__card${p === poppingSeat ? ' opponent-hand-counts__card--pop' : ''}`}
                   style={{ left: x + offset * dx, top: y + offset * dy }}
                 >
                   {isTop && (

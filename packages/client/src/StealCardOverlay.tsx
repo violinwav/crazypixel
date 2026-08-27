@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import type { GameState, Move, PlayerId } from '@crazypixel/shared';
+import type { Card, GameState, Move, PlayerId } from '@crazypixel/shared';
 import { CARD_BACK_SPRITE } from './game/cardArt';
 import { StealFlight } from './StealFlight';
 import type { StealFlightPlan } from './StealFlight';
+import type { Point } from './game/boardLayout';
 
 type ForceDrawMove = Extract<Move, { kind: 'forceDraw' }>;
 
@@ -16,10 +17,15 @@ interface Props {
    * step now doubles as "whose hand" - see figureTargets.ts) - skips this component's own
    * opponent chooser and goes straight to the card-position picker. */
   forcedTarget?: PlayerId;
-  /** Shown instead of the internal "choose a different player" control when forcedTarget is
-   * set, since going back means re-opening the figure list one level up, not re-picking
-   * within this component. */
-  onBack?: () => void;
+  /** Where the target's own card stack sits on the board, in board-overlay coordinates (see
+   * boardLayout's handCountPoint). The reveal flight starts THERE rather than at the tapped
+   * position in the picker row: the picker is an abstract grid at the bottom of the screen,
+   * so a card leaving it says nothing about whose hand it came out of, while a card leaving
+   * the stack hovering over that player's own home row says it without a word. */
+  targetFanPoint?: Point;
+  /** Fired once the reveal has been held long enough to read - the hand opens a slot on the
+   * right for the card so it has somewhere to land (see GameBoard's incomingCard). */
+  onIncoming: (card: Card) => void;
 }
 
 /** Unwraps copyLastCard/wildAs down to the underlying forceDraw, same pattern as
@@ -34,10 +40,13 @@ export function unwrapForceDraw(move: Move): ForceDrawMove | null {
 // "Draw opponent's card" - a blind steal at *pick* time (the position grid never shows
 // which card is which, so the choice itself is genuinely uninformed). The engine enumerates
 // one legal move per (opponent, hand position), so the UI's job is just: pick whose hand,
-// then pick a position. Once a position is committed to, StealFlight reveals the real card
-// mid-flight into the thief's hand (see its own comment on why that's fine to show) rather
+// then pick a position. Choosing whose hand happens one level up (BoardOverlay's figure
+// step) and is irreversible - the card is already face-up on the discard pile by the time
+// this renders - so there is no way out of here but picking a position, or letting the turn
+// clock pick one (GameRoom.autoPlayTurn). Once a position is committed to, StealFlight
+// carries the card back from that player's stack and reveals it in the thief's hand rather
 // than the move applying with an instant teleport.
-export function StealCardOverlay({ state, moves, onPlay, forcedTarget, onBack }: Props) {
+export function StealCardOverlay({ state, moves, onPlay, forcedTarget, targetFanPoint, onIncoming }: Props) {
   const [targetPlayer, setTargetPlayer] = useState<PlayerId | null>(forcedTarget ?? null);
   const [flight, setFlight] = useState<{ plan: StealFlightPlan; move: Move } | null>(null);
   const player = state.currentPlayer;
@@ -52,6 +61,18 @@ export function StealCardOverlay({ state, moves, onPlay, forcedTarget, onBack }:
     return (
       <StealFlight
         plan={flight.plan}
+        onMakeRoom={() => onIncoming(flight.plan.card)}
+        // Queried here rather than inside StealFlight, which has no business knowing what the
+        // hand panel's markup looks like - this component already reads .hand-panel and
+        // .board-overlay for the flight's own endpoints.
+        resolveLanding={() => {
+          const slot = document.querySelector('[data-incoming-slot]');
+          if (!slot) return null;
+          const rect = slot.getBoundingClientRect();
+          // A slot mid-way through opening (or already closed again) is not somewhere to aim.
+          if (rect.width < 1) return null;
+          return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+        }}
         onDone={() => {
           onPlay(player, flight.move);
           setFlight(null);
@@ -96,11 +117,25 @@ export function StealCardOverlay({ state, moves, onPlay, forcedTarget, onBack }:
                   onPlay(player, match.top);
                   return;
                 }
+                // closest(), not a document-wide query: several .board-overlay layers can be
+                // mounted at once (an 8 offering its own move alongside a copied one), and
+                // this walks up to the exact one targetFanPoint was measured against. They're
+                // all inset:0 over the same container, so any of them would give the same
+                // rect today - this just can't silently stop being true.
+                const overlayRect = e.currentTarget.closest('.board-overlay')?.getBoundingClientRect();
+                const from = targetFanPoint && overlayRect
+                  ? {
+                    x: overlayRect.left + targetFanPoint.x - fromRect.width / 2,
+                    y: overlayRect.top + targetFanPoint.y - fromRect.height / 2,
+                    width: fromRect.width,
+                    height: fromRect.height,
+                  }
+                  : { x: fromRect.left, y: fromRect.top, width: fromRect.width, height: fromRect.height };
                 setFlight({
                   move: match.top,
                   plan: {
                     card: state.hands[targetPlayer][i],
-                    from: { x: fromRect.left, y: fromRect.top, width: fromRect.width, height: fromRect.height },
+                    from,
                     to: { x: handRect.left + handRect.width / 2, y: handRect.top + handRect.height / 2 },
                   },
                 });
@@ -111,15 +146,6 @@ export function StealCardOverlay({ state, moves, onPlay, forcedTarget, onBack }:
           );
         })}
       </div>
-      {onBack ? (
-        <button type="button" className="cp-button steal-overlay__cancel" onClick={onBack}>
-          Back
-        </button>
-      ) : targets.length > 1 && (
-        <button type="button" className="cp-button steal-overlay__cancel" onClick={() => setTargetPlayer(null)}>
-          Choose a different player
-        </button>
-      )}
     </div>
   );
 }
