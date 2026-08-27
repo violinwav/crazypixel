@@ -42,7 +42,9 @@ export interface BoardGeometry {
   rotation: number;
 }
 
-const REFERENCE_TRACK_RADIUS = 220;
+// Exported so any renderer (TableScene's Phaser pieces, a DOM card overlay) can derive the
+// same scale factor off geo.trackRadius instead of each hand-tuning its own reference value.
+export const REFERENCE_TRACK_RADIUS = 220;
 // Deliberately below the original fixed-4-player track length (64) - first pass only
 // boosted the ring for 6P and left 4P at its original, unboosted radius, which turned out
 // to still read as cramped. Using a lower reference means every config from 4P up gets at
@@ -190,6 +192,13 @@ export function drawPileCenter(geo: BoardGeometry): Point {
 
 export function discardPileCenter(geo: BoardGeometry): Point {
   return { x: geo.stackCenter.x - geo.stackOffset, y: geo.stackCenter.y };
+}
+
+/** Same viewport-scale factor TableScene.ts's own pieceScale getter derives from geo - the
+ * single conversion every piece/card size (Phaser or DOM) goes through, so a card scales
+ * identically wherever it's drawn instead of two independently-tuned scale curves. */
+export function pieceScaleFor(geo: BoardGeometry): number {
+  return geo.trackRadius / REFERENCE_TRACK_RADIUS;
 }
 
 export function allHomeSlots(config: GameConfig, geo: BoardGeometry): { player: PlayerId; slot: number; point: Point }[] {

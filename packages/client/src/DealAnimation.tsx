@@ -1,29 +1,26 @@
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { Card } from '@crazypixel/shared';
-import { CARD_BACK_SPRITE, CARD_FACE_SPRITE } from './game/cardArt';
+import { CARD_BACK_SPRITE, CARD_FACE_SPRITE, CARD_HEIGHT, CARD_WIDTH, handCardWidthFor } from './game/cardArt';
 import { CardRankIndices } from './CardRankIndices';
 
 const FLIGHT_MS = 320;
 const FLIP_MS = 260;
 const STAGGER_MS = 100;
-
-// .hand-panel's own horizontal padding (see theme.css) - subtracted before dividing into 6
-// card-plus-gap slots, so this lands on the exact same width .hand-panel__card computes via
-// calc((100% - 5*8px)/6), not an approximation of it. Getting this wrong is exactly what
-// caused a visible resize snap the instant the deal animation handed off to the real hand.
+// .hand-panel's own horizontal padding (theme.css) - handCardWidthFor (cardArt.ts) already
+// factors this into the card width itself, but the row-centering math below also needs it
+// directly to know where the padded content box starts.
 const HAND_PANEL_PADDING_X = 14 * 2;
 const CARD_GAP = 8;
 
 /** Mirrors .playing-card.hand-panel__card's own responsive width formula in theme.css
- * exactly, using the real measured hand-panel width (plan.to.width, from GameView's
- * getBoundingClientRect - the deck has no actual hand-card DOM element to measure yet, this
- * one doesn't exist until the deal completes) rather than approximating it from the
- * viewport. */
+ * exactly, via the shared handCardWidthFor (cardArt.ts) - using the real measured hand-panel
+ * width (plan.to.width, from GameView's getBoundingClientRect - the deck has no actual
+ * hand-card DOM element to measure yet, this one doesn't exist until the deal completes)
+ * rather than approximating it from the viewport. */
 function computeCardSize(containerWidth: number) {
-  const cardsWidth = Math.max(0, containerWidth - HAND_PANEL_PADDING_X);
-  const width = Math.min(80, (cardsWidth - 5 * CARD_GAP) / 6);
-  return { width, height: width * 1.4 };
+  const width = handCardWidthFor(containerWidth);
+  return { width, height: width * (CARD_HEIGHT / CARD_WIDTH) };
 }
 
 export interface DealPlan {

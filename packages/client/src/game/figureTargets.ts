@@ -1,6 +1,6 @@
 import { KENNEL_SIZE, trackLengthFor } from '@crazypixel/shared';
 import type { GameState, Move } from '@crazypixel/shared';
-import { trackPoint, kennelSlotPoint, homeSlotPoint } from './boardLayout';
+import { trackPoint, kennelSlotPoint, handCountPoint, homeSlotPoint } from './boardLayout';
 import type { BoardGeometry, Point } from './boardLayout';
 
 export interface Figure {
@@ -69,7 +69,11 @@ function figureFor(state: GameState, move: Move, geo: BoardGeometry): FigureInfo
       return { key: `marble:${marble.id}`, point, label };
     }
     case 'forceDraw': {
-      const point = kennelSlotPoint(config, inner.targetPlayer, (KENNEL_SIZE - 1) / 2, geo);
+      // The steal reaches into their *hand*, so the ring belongs on the fanned card icons
+      // that represent it (OpponentHandCounts.tsx, anchored at handCountPoint) - it used to
+      // sit on their kennel cluster, pointing at marbles the move never touches. Same geo
+      // (viewer-rotated) both places, so the ring lands exactly on the cards.
+      const point = handCountPoint(config, inner.targetPlayer, geo);
       return { key: `opponent:${inner.targetPlayer}`, point, label: `Player ${inner.targetPlayer + 1}'s hand - draw a card` };
     }
     default:

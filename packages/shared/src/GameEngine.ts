@@ -97,11 +97,15 @@ export function passCard(state: GameState, from: PlayerId, card: Card): void {
 export function startGame(state: GameState): void {
   dealRound(state);
   state.phase = 'playing';
+  const players = activePlayerIds(state.config);
   // createInitialState's currentPlayer: 1 is just a type-safe placeholder (every config has
   // at least 2 players, so index 1 is always valid to construct with) - it was never meant
   // to be the real starting player. Without this, every game silently opened on Player 2,
   // skipping Player 1's entire first turn.
-  state.currentPlayer = activePlayerIds(state.config)[0];
+  state.currentPlayer = players[0];
+  // Every round's starter is the seat after the dealer (see advanceTurn), and the game still
+  // opens on seat 0 - so round 1's dealer is the seat *before* it, i.e. the last one.
+  state.dealerIndex = players[players.length - 1];
 }
 
 /**
@@ -117,9 +121,8 @@ export function passHand(state: GameState, player: PlayerId): void {
 
 /**
  * Advances to the next active player with cards left in hand (skipping anyone who has
- * already passHand'd this round). When every hand is empty, deals the next round first
- * (dealer rotation isn't implemented - the same seat order continues across round
- * boundaries rather than starting from whoever the new "dealer" would be).
+ * already passHand'd this round). When every hand is empty, deals the next round first and
+ * rotates the deal one seat on - see the round-boundary branch below.
  */
 export function advanceTurn(state: GameState): void {
   const players = activePlayerIds(state.config);
@@ -127,7 +130,13 @@ export function advanceTurn(state: GameState): void {
     state.roundIndex += 1;
     dealRound(state);
     state.phase = 'playing';
-    state.currentPlayer = players[(players.indexOf(state.currentPlayer) + 1) % players.length];
+    // Each fresh deal moves one seat further round the table: the dealer rotates, and the
+    // seat after the dealer opens the round. Deliberately anchored to dealerIndex, not to
+    // whoever moved last - who that is depends on the order players ran out of cards or
+    // passHand'd, so chaining off state.currentPlayer (as this used to) let a round start
+    // on an effectively arbitrary seat instead of the next one in line.
+    state.dealerIndex = players[(players.indexOf(state.dealerIndex) + 1) % players.length];
+    state.currentPlayer = players[(players.indexOf(state.dealerIndex) + 1) % players.length];
     return;
   }
   let idx = (players.indexOf(state.currentPlayer) + 1) % players.length;
@@ -295,7 +304,16 @@ function isMoveClear(state: GameState, marble: Marble, steps: number): boolean {
   return !homeStretchOvertake(state, marble, plan);
 }
 
-export function getLegalMoves(state: GameState, player: PlayerId, card: Card): Move[] {
+export function getLegalMoves(
+  state: GameState,
+  player: PlayerId,
+  card: Card,
+  /** False while enumerating the moves an 8 could copy. The 8's copy branch and the Joker's
+   * wildAs branch each expand into the other's moves, so a Joker under an 8 (whose wildAs
+   * synthesizes an 8, whose copy branch sees the same Joker again) recursed forever - this
+   * flag cuts the second copy hop instead of banning the pairing outright. */
+  allowCopy = true,
+): Move[] {
   const def = CARD_DEFS[card.rank];
   const moves: Move[] = [];
   const config = state.config;
@@ -342,18 +360,18 @@ export function getLegalMoves(state: GameState, player: PlayerId, card: Card): M
 
   // House rule: an 8 either moves 8, or replays whatever the previous card did. Copying
   // another 8 is disallowed to avoid open-ended recursion (not specified in source text).
-  // Copying a JOKER is disallowed for the same reason, and it's not just symmetry: the
-  // Joker's own "act as any card" below synthesizes an 8 variant when computing its
-  // options, which would hit this exact branch and try to copy the Joker again - infinite
-  // mutual recursion between the two house rules (confirmed via a real stack overflow
-  // before this guard existed).
+  // Copying a JOKER *is* allowed, but only one hop deep: the Joker's "act as any card"
+  // below synthesizes an 8 variant, which would hit this exact branch and try to copy the
+  // same Joker again - infinite mutual recursion between the two house rules (a real stack
+  // overflow). The allowCopy flag cuts that second hop, which is why the pairing works
+  // instead of being banned outright.
   if (
     def.customEight
+    && allowCopy
     && state.lastPlayedCard
     && state.lastPlayedCard.rank !== '8'
-    && state.lastPlayedCard.rank !== 'JOKER'
   ) {
-    for (const inner of getLegalMoves(state, player, state.lastPlayedCard)) {
+    for (const inner of getLegalMoves(state, player, state.lastPlayedCard, false)) {
       moves.push({ kind: 'copyLastCard', card, innerMove: inner });
     }
   }
@@ -368,7 +386,7 @@ export function getLegalMoves(state: GameState, player: PlayerId, card: Card): M
   if (def.isWild) {
     for (const asRank of RANKS) {
       const asCard: Card = { id: card.id, suit: card.suit, rank: asRank };
-      for (const inner of getLegalMoves(state, player, asCard)) {
+      for (const inner of getLegalMoves(state, player, asCard, allowCopy)) {
         moves.push({ kind: 'wildAs', card, asRank, innerMove: inner });
       }
     }
@@ -558,6 +576,71 @@ function moveWithPassOverCapture(state: GameState, marble: Marble, steps: number
   }
   marble.location = plan.location;
   markLappedIfAtOwnStart(state, marble);
+}
+
+/**
+ * Track indices where `marble` walking `steps` would send some other marble home - the
+ * read-only preview counterpart of moveWithLandingCapture/moveWithPassOverCapture above,
+ * so the client can highlight kills without re-deriving (and drifting from) the rule.
+ * `mode` picks which of those two it mirrors: 'landing' (every card but the 7) only bumps
+ * the square it stops on, 'passOver' (the 7) burns every square walked through as well.
+ */
+export function captureIndicesFor(
+  state: GameState,
+  marble: Marble,
+  steps: number,
+  mode: 'landing' | 'passOver',
+): number[] {
+  const plan = planMovement(state, marble, steps);
+  if (!plan.legal) return [];
+  // Entering home is never a capture, so a landing move that ends in the home stretch has
+  // no square to flag at all - trackPassed there is only the run-up, which a non-7 walks
+  // straight over without touching anything.
+  const candidates = mode === 'passOver'
+    ? plan.trackPassed
+    : plan.location.zone === 'track' ? [plan.location.index] : [];
+  return candidates.filter((index) => {
+    const occupant = marbleAtTrackIndex(state, index);
+    return !!occupant && occupant.id !== marble.id;
+  });
+}
+
+/** Every track index `move` would send a marble home from. Sequential for a 7-split, the
+ * same way applyEffect runs its segments (an earlier segment can move the very marble a
+ * later one would otherwise have burned), via the same marbles-only scratch clone
+ * generateSevenSplits uses. */
+export function moveCaptureIndices(state: GameState, move: Move): number[] {
+  switch (move.kind) {
+    case 'startMarble': {
+      const startIdx = startIndexFor(state.config, state.currentPlayer);
+      const occupant = marbleAtTrackIndex(state, startIdx);
+      // Only an opponent can be sitting there - your own marble makes the move illegal in
+      // the first place (see getLegalMoves' blockedByOwnMarble).
+      return occupant && occupant.id !== move.marbleId ? [startIdx] : [];
+    }
+    case 'moveMarble': {
+      const marble = state.marbles.find((m) => m.id === move.marbleId);
+      return marble ? captureIndicesFor(state, marble, move.steps, 'landing') : [];
+    }
+    case 'splitSeven': {
+      const indices: number[] = [];
+      const scratch: GameState = { ...state, marbles: state.marbles.map((m) => ({ ...m, location: { ...m.location } })) };
+      for (const segment of move.steps) {
+        const marble = scratch.marbles.find((m) => m.id === segment.marbleId);
+        if (!marble) continue;
+        indices.push(...captureIndicesFor(scratch, marble, segment.steps, 'passOver'));
+        moveWithPassOverCapture(scratch, marble, segment.steps);
+      }
+      return [...new Set(indices)];
+    }
+    case 'copyLastCard':
+    case 'wildAs':
+      return moveCaptureIndices(state, move.innerMove);
+    // A swap displaces nobody (both marbles stay on the board) and forceDraw never touches
+    // the track at all.
+    default:
+      return [];
+  }
 }
 
 /** A player (ffa) or both members of a team (teams) win the instant every one of their

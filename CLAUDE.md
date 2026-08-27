@@ -58,9 +58,13 @@ online multiplayer (host/join by room code) both work today - see Architecture b
   (`JSON.stringify(GameState)`), not per-field `@colyseus/schema` mirroring - see
   `docs/superpowers/specs/2026-08-22-online-multiplayer-lobbies-design.md` for why. The
   join "code" players share is just Colyseus's own `room.id`; there's no separate
-  matchmaking/room-list registry. **Not implemented:** reconnect after a disconnect (a
-  dropped seat just freezes mid-game), rematch/"Play Again" in online mode, spectators, and
-  any persistence (rooms are in-memory, gone when empty or the process restarts).
+  matchmaking/room-list registry. Rematch after a game ends is host-only (seat 0, the same
+  seat that presses Start Game) - `handleRematch` re-deals a fresh game to the same seats,
+  colors and names, and only fires once `gameState.phase === 'gameEnd'`. **Not
+  implemented:** reconnect after a disconnect (a dropped seat just freezes mid-game, and
+  carries into a rematch still frozen - if it's seat 0 that dropped, nobody can rematch at
+  all), spectators, and any persistence (rooms are in-memory, gone when empty or the
+  process restarts).
 
 ## Non-obvious things that will bite you
 

@@ -10,6 +10,7 @@ import { HandPanel } from './HandPanel';
 import { BoardOverlay } from './BoardOverlay';
 import { BoardStatus } from './BoardStatus';
 import { OpponentHandCounts } from './OpponentHandCounts';
+import { LaidCard } from './LaidCard';
 import { TurnLabel } from './TurnLabel';
 import { TurnTimerBar } from './TurnTimerBar';
 import { FlyingCard } from './FlyingCard';
@@ -38,6 +39,11 @@ interface Props {
   play: (player: PlayerId, move: Move) => void;
   passCurrentHand: () => void;
   restart?: () => void;
+  /** Win-screen label for `restart`. Defaults to 'Play Again' (see WinScreen). */
+  restartLabel?: string;
+  /** Shown on the win screen in `restart`'s place when it's absent - online, only the host
+   * can start a rematch (see GameRoom.handleRematch). Undefined for local hotseat. */
+  restartHint?: string;
   lastPlanRef: MutableRefObject<TurnAnimation>;
   mySeat: PlayerId;
   /** Which seat's base renders at the bottom of the ring - see boardLayout.ts's
@@ -65,7 +71,7 @@ interface Props {
 }
 
 export function GameBoard({
-  state, play, passCurrentHand, restart, lastPlanRef, mySeat, viewerSeat = mySeat, colors, playerNames, turnDeadline, onBackgroundChange,
+  state, play, passCurrentHand, restart, restartLabel, restartHint, lastPlanRef, mySeat, viewerSeat = mySeat, colors, playerNames, turnDeadline, onBackgroundChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const handPanelRef = useRef<HTMLDivElement>(null);
@@ -252,6 +258,14 @@ export function GameBoard({
           viewerSeat={viewerSeat}
           playerNames={playerNames}
         />
+        {state.lastPlayedCard && (
+          <LaidCard
+            key={state.lastPlayedCard.id}
+            state={state}
+            containerSize={containerSize}
+            viewerSeat={viewerSeat}
+          />
+        )}
         {isMyTurn && (
           <BoardOverlay
             state={state}
@@ -278,8 +292,14 @@ export function GameBoard({
             used to sit inside it (hidden along with the cards during the deal), which meant
             the plainer app-wide background showed through here for the whole deal animation
             and only switched to this one once the deal finished, reading as "the old
-            background" hanging around during a load rather than a real fix. */}
-        <PixelDither vivid color={hueToCss(colors[mySeat])} className="hand-panel__background" />
+            background" hanging around during a load rather than a real fix.
+            visible={isMyTurn} matches the app-wide background's own rule (see
+            onBackgroundChange above): your seat color only lights up the hand area while
+            you're actually acting, so online the panel reads as inert on other players'
+            turns instead of implying an interactive hand. A `visible` crossfade rather than
+            unmounting, so the dither's own animation phase doesn't reset each turn. Always
+            true in local hotseat, where mySeat === state.currentPlayer by construction. */}
+        <PixelDither vivid visible={isMyTurn} color={hueToCss(colors[mySeat])} className="hand-panel__background" />
         <div style={{ opacity: dealPlan ? 0 : 1 }}>
           <TurnLabel player={state.currentPlayer} playerNames={playerNames} />
           {turnDeadline !== undefined && <TurnTimerBar deadline={turnDeadline} />}
@@ -295,7 +315,7 @@ export function GameBoard({
       {flight && <FlyingCard plan={flight} onDone={() => setFlight(null)} />}
       {stolenFlight && <FlyingCard plan={stolenFlight} onDone={() => setStolenFlight(null)} />}
       {dealPlan && <DealAnimation plan={dealPlan} onDone={() => setDealPlan(null)} />}
-      <WinScreen state={state} colors={colors} playerNames={playerNames} onPlayAgain={restart} />
+      <WinScreen state={state} colors={colors} playerNames={playerNames} onPlayAgain={restart} playAgainLabel={restartLabel} playAgainHint={restartHint} />
     </main>
   );
 }

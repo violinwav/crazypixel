@@ -58,6 +58,9 @@ export interface GameState {
   lastPlayedCard: Card | null;
   lastPlayedBy: PlayerId | null;
   roundIndex: number;
+  /** Who dealt the current round. Rotates one seat per deal; the round's first turn goes to
+   * the seat after this one (see advanceTurn), so the opening seat walks round the table
+   * across rounds instead of following on from whoever happened to play last. */
   dealerIndex: PlayerId;
   currentPlayer: PlayerId;
   phase: GamePhase;

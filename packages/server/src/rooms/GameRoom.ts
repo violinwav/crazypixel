@@ -112,6 +112,7 @@ export class GameRoom extends Room<RoomState> {
     this.onMessage('passHand', (client) => this.handlePassHand(client));
     this.onMessage('setColor', (client, message: SetColorMessage) => this.handleSetColor(client, message));
     this.onMessage('startGame', (client) => this.handleStartGame(client));
+    this.onMessage('rematch', (client) => this.handleRematch(client));
   }
 
   /** Rejects a join once the game's started - not redundant with maxClients/lock() below.
@@ -173,6 +174,18 @@ export class GameRoom extends Room<RoomState> {
     advanceTurn(next);
     this.gameState = next;
     this.state.stateJson = JSON.stringify(next);
+    // A finished game gets no new clock. Without this the 20s timer stayed armed after the
+    // winning move and autoPlayTurn kept committing real moves on an ended game every 20s
+    // forever (confirmed by driving the engine directly: winners/phase stick, since
+    // checkWinner early-returns once winners is set, but marbles kept walking, hands kept
+    // draining and rounds kept re-dealing behind the win screen). turnDeadline back to 0 so
+    // TurnTimerBar stops rendering a countdown for a turn that can no longer time out.
+    if (next.phase === 'gameEnd') {
+      this.turnTimeout?.clear();
+      this.turnTimeout = null;
+      this.state.turnDeadline = 0;
+      return;
+    }
     this.scheduleTurnTimeout();
   }
 
@@ -269,5 +282,35 @@ export class GameRoom extends Room<RoomState> {
     // matchmaking's room-listing results too, not just out of reach for a client that
     // already has the code.
     void this.lock();
+  }
+
+  /** Deals a brand-new game to the same seats after one finishes. Host-only, matching
+   * handleStartGame - one player decides for the table rather than a majority vote or a
+   * first-click-wins race between six win screens.
+   *
+   * Reuses the finished game's own `config` rather than rebuilding one from the current
+   * seat count: seats can't change once a game is playing (onAuth rejects late joins,
+   * onLeave leaves a started game's seats alone), so the two agree today, but reading it
+   * off the state that just ended is what keeps them agreeing if that ever stops being
+   * true - a config with a different playerCount than the seats clients are already
+   * rendering would desync every board at once.
+   *
+   * Seats, colors and names all deliberately carry over untouched - the room's whole
+   * identity is "these people at these seats," and a rematch is another game between them,
+   * not a new lobby. That includes any seat whose client dropped mid-game (still frozen,
+   * see onLeave); it plays the rematch on the turn clock's auto-play like it did before. */
+  private handleRematch(client: Client) {
+    if (this.state.phase !== 'playing') return;
+    // The finished-ness is the real gate, not the room phase - room phase stays 'playing'
+    // for a room's whole life once started, so without this any seat-0 client could reroll
+    // a game that's still in progress out from under everyone.
+    if (this.gameState?.phase !== 'gameEnd') return;
+    if (this.seatFor(client) !== 0) return;
+
+    const state = createInitialState(this.gameState.config);
+    startGame(state);
+    this.gameState = state;
+    this.state.stateJson = JSON.stringify(state);
+    this.scheduleTurnTimeout();
   }
 }

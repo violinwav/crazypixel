@@ -8,7 +8,7 @@ import { resolveMoveTargets } from './game/moveTargets';
 import { groupMovesByFigure } from './game/figureTargets';
 import type { Figure } from './game/figureTargets';
 import { describeMove } from './game/describeMove';
-import { CARD_FACE_SPRITE, CARD_BACK_SPRITE } from './game/cardArt';
+import { CARD_FACE_SPRITE, CARD_BACK_SPRITE, handCardWidthFor } from './game/cardArt';
 import { CardRankIndices } from './CardRankIndices';
 import { SevenSplitOverlay } from './SevenSplitOverlay';
 import { StealCardOverlay } from './StealCardOverlay';
@@ -16,6 +16,15 @@ import { StealCardOverlay } from './StealCardOverlay';
 const TARGET_SIZE = 44; // WCAG 2.5.8 touch-target floor - matters here more than most
 // buttons, since these sit directly over the (smaller) marble/tile art they highlight.
 const PATH_DOT_SIZE = 8;
+
+/** Spoken counterpart of the red capture highlight - a 7 can burn several squares in one
+ * play, so this counts them rather than just saying "a capture". */
+function captureCountLabel(captured: boolean[]): string {
+  const count = captured.filter(Boolean).length;
+  if (count === 0) return '';
+  return count === 1 ? ' (sends a marble home)' : ` (sends ${count} marbles home)`;
+}
+
 
 /** Unwraps wildAs/copyLastCard down to see if a move is, at heart, a splitSeven - true not
  * just for a real 7, but for an 8 (or a Joker played as 8) copying a previous 7's effect.
@@ -27,6 +36,36 @@ const PATH_DOT_SIZE = 8;
 function isSevenSplitMove(move: Move): boolean {
   if (move.kind === 'splitSeven') return true;
   if (move.kind === 'wildAs' || move.kind === 'copyLastCard') return isSevenSplitMove(move.innerMove);
+  return false;
+}
+
+/** A 7 that actually spreads its steps over more than one marble. When *no* legal play of
+ * the 7 does (one eligible marble, so "that marble takes all 7" is the only allocation),
+ * the dedicated allocator is pure ceremony - a slider with a single reachable value that
+ * committed the card on the first tap. Those route through the ordinary figure-then-target
+ * flow instead, so a 7 previews its path and asks for a confirming tap on the destination
+ * exactly like a 9 does. Single-marble splitSeven already resolves to one board point in
+ * both moveTargets.ts and figureTargets.ts, so nothing else has to change. */
+function isMultiMarbleSeven(move: Move): boolean {
+  if (move.kind === 'splitSeven') return move.steps.length > 1;
+  if (move.kind === 'wildAs' || move.kind === 'copyLastCard') return isMultiMarbleSeven(move.innerMove);
+  return false;
+}
+
+/** The rank a Joker is being played as, seen through any copyLastCard wrapper - an 8
+ * copying a previously played Joker produces copyLastCard{wildAs}, which needs the same
+ * rank picker a bare Joker gets, or the board floods with every rank's moves at once. */
+function wildRankOf(move: Move): CardRank | null {
+  if (move.kind === 'wildAs') return move.asRank;
+  if (move.kind === 'copyLastCard') return wildRankOf(move.innerMove);
+  return null;
+}
+
+/** Unwrapped-startMarble test, same wrapper-piercing reason as wildRankOf: the Joker's own
+ * start ability arrives as copyLastCard{startMarble} when an 8 copies it. */
+function isStartMove(move: Move): boolean {
+  if (move.kind === 'startMarble') return true;
+  if (move.kind === 'copyLastCard') return isStartMove(move.innerMove);
   return false;
 }
 
@@ -66,60 +105,90 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay, viewe
   const geo = computeBoardGeometry(containerSize.width, containerSize.height, trackLengthFor(state.config), viewerSeat, state.config.playerCount);
   const legalMoves = getLegalMoves(state, player, selectedCard);
 
-  if (selectedCard.rank === 'JOKER') {
-    const wildMoves = legalMoves.filter((m): m is Extract<Move, { kind: 'wildAs' }> => m.kind === 'wildAs');
-    const availableRanks = [...new Set(wildMoves.map((m) => m.asRank))];
+  // Any move that bottoms out in a wildAs needs the rank picker - a bare Joker, or an 8
+  // copying a Joker that was played before it.
+  const wildMoves = legalMoves.filter((m) => wildRankOf(m) !== null);
+
+  if (wildMoves.length > 0) {
+    const availableRanks = [...new Set(wildMoves.map((m) => wildRankOf(m)!))];
     // The Joker's OWN start ability (its canStart, same as an Ace/King) isn't wrapped as a
     // wildAs - see GameEngine.ts's isWild loop skipping startMarble to avoid offering it
     // three times over. It still needs its own chip here, or it's simply unreachable.
-    const canStartDirect = legalMoves.some((m) => m.kind === 'startMarble');
+    const startMoves = legalMoves.filter((m) => wildRankOf(m) === null && isStartMove(m));
+    // Whatever the played card can do on its own (an 8's plain move-8, alongside its copy
+    // of the Joker) stays on the board through both phases - it isn't part of the Joker's
+    // rank choice, and hiding it behind the picker would make it unreachable.
+    const ownMoves = legalMoves.filter((m) => wildRankOf(m) === null && !isStartMove(m));
 
-    if (!jokerRank) {
-      // Actual mini card faces, not text chips - "play the Joker as a 7" reads instantly as
-      // a picture of a 7 in a way a bare letter/number button didn't.
-      return (
-        <div className="board-overlay">
-          <div className="rank-picker" role="group" aria-label="Choose what to play the Joker as">
-            {canStartDirect && (
-              <button
-                type="button"
-                className="playing-card rank-picker__card"
-                style={{ '--card-face': `url(${CARD_BACK_SPRITE})` } as CSSProperties}
-                aria-label="Bring a marble from your base"
-                onClick={() => setJokerRank('START')}
-              />
-            )}
-            {availableRanks.map((rank) => (
-              <button
-                key={rank}
-                type="button"
-                className="playing-card rank-picker__card"
-                style={{ '--card-face': `url(${CARD_FACE_SPRITE[rank]})` } as CSSProperties}
-                aria-label={`Play as ${rank}`}
-                onClick={() => setJokerRank(rank)}
-              >
-                <CardRankIndices rank={rank} />
-              </button>
-            ))}
-          </div>
-        </div>
-      );
-    }
-
-    const movesForRank = jokerRank === 'START'
-      ? legalMoves.filter((m) => m.kind === 'startMarble')
-      : wildMoves.filter((m) => m.asRank === jokerRank);
-
-    return (
+    const ownLayer = ownMoves.length > 0 ? (
       <MoveRouter
-        key={jokerRank}
+        key={`own-${selectedCard.id}`}
         state={state}
-        moves={movesForRank}
+        moves={ownMoves}
         geo={geo}
         player={player}
         onPlay={onPlay}
         onCardLeavingHand={onCardLeavingHand}
       />
+    ) : null;
+
+    if (!jokerRank) {
+      // Real card faces at the same width a hand card currently renders at (see
+      // handCardWidthFor - cardArt.ts), not the base .playing-card's fixed 80px - the picker
+      // sits inside its own centered flex-wrap row, not the hand-panel's 6-slot layout, so it
+      // can't lean on that CSS calc() the way .hand-panel__card does; it has to compute the
+      // same real width in JS off containerSize instead, or it stays desktop-size on a phone
+      // where the hand itself has already shrunk well below 80px.
+      const cardWidth = handCardWidthFor(containerSize.width);
+      return (
+        <>
+          {ownLayer}
+          <div className="board-overlay">
+            <div className="rank-picker" role="group" aria-label="Choose what to play the Joker as">
+              {startMoves.length > 0 && (
+                <button
+                  type="button"
+                  className="playing-card rank-picker__card"
+                  style={{ '--card-face': `url(${CARD_BACK_SPRITE})`, width: cardWidth } as CSSProperties}
+                  aria-label="Bring a marble from your base"
+                  onClick={() => setJokerRank('START')}
+                />
+              )}
+              {availableRanks.map((rank) => (
+                <button
+                  key={rank}
+                  type="button"
+                  className="playing-card rank-picker__card"
+                  style={{ '--card-face': `url(${CARD_FACE_SPRITE[rank]})`, width: cardWidth } as CSSProperties}
+                  aria-label={`Play as ${rank}`}
+                  onClick={() => setJokerRank(rank)}
+                >
+                  <CardRankIndices rank={rank} />
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      );
+    }
+
+    const movesForRank = jokerRank === 'START'
+      ? startMoves
+      : wildMoves.filter((m) => wildRankOf(m) === jokerRank);
+
+    return (
+      <>
+        {ownLayer}
+        <MoveRouter
+          key={jokerRank}
+          state={state}
+          moves={movesForRank}
+          geo={geo}
+          player={player}
+          onPlay={onPlay}
+          onCardLeavingHand={onCardLeavingHand}
+        />
+      </>
     );
   }
 
@@ -140,10 +209,12 @@ export function BoardOverlay({ state, selectedCard, containerSize, onPlay, viewe
  * previous 7's effect - see isSevenSplitMove) into the dedicated multi-marble allocator,
  * everything else through the normal figure-then-target flow. Both can legally coexist on
  * one card (an 8 offers "copy the 7" alongside its own plain move-8), so both render at
- * once rather than one replacing the other. */
+ * once rather than one replacing the other. The allocator only appears when some legal play
+ * genuinely spreads the 7 over multiple marbles - see isMultiMarbleSeven. */
 function MoveRouter({ state, moves, geo, player, onPlay, onCardLeavingHand }: FigureThenMovesProps) {
-  const splitMoves = moves.filter(isSevenSplitMove);
-  const otherMoves = moves.filter((m) => !isSevenSplitMove(m));
+  const needsAllocator = moves.some(isMultiMarbleSeven);
+  const splitMoves = needsAllocator ? moves.filter(isSevenSplitMove) : [];
+  const otherMoves = needsAllocator ? moves.filter((m) => !isSevenSplitMove(m)) : moves;
 
   if (splitMoves.length === 0) {
     return (
@@ -270,20 +341,23 @@ function FigureThenMoves({ state, moves, geo, player, onPlay, onCardLeavingHand 
   const { targets, unresolved: innerUnresolved } = resolveMoveTargets(state, selected.moves, geo);
   return (
     <div className="board-overlay">
-      {targets.map(({ move, point, path }, i) => (
+      {targets.map(({ move, point, path, captured, capturesTarget }, i) => (
         <div key={i}>
           {path.slice(0, -1).map((p, j) => (
             <div
               key={j}
-              className="board-overlay__path-dot"
+              className={`board-overlay__path-dot${captured[j] ? ' board-overlay__path-dot--capture' : ''}`}
               style={{ left: p.x - PATH_DOT_SIZE / 2, top: p.y - PATH_DOT_SIZE / 2, width: PATH_DOT_SIZE, height: PATH_DOT_SIZE }}
             />
           ))}
           <button
             type="button"
-            className="board-overlay__target"
+            className={`board-overlay__target${capturesTarget ? ' board-overlay__target--capture' : ''}`}
             style={{ left: point.x - TARGET_SIZE / 2, top: point.y - TARGET_SIZE / 2, width: TARGET_SIZE, height: TARGET_SIZE }}
-            aria-label={describeMove(move, state)}
+            // Red is the only *visual* difference between a plain landing square and one that
+            // sends a marble home - the label carries the same information, or the cue is
+            // invisible to a screen reader (WCAG 1.4.1).
+            aria-label={`${describeMove(move, state)}${captureCountLabel(captured)}`}
             onClick={() => onPlay(player, move)}
           />
         </div>

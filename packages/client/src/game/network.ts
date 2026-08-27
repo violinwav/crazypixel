@@ -87,3 +87,10 @@ export function setSeatColor(room: Room<RoomState>, hue: number): void {
 export function startGame(room: Room<RoomState>): void {
   room.send('startGame');
 }
+
+/** Host-only server-side (see GameRoom.handleRematch) - sending this from any other seat is
+ * silently ignored, same as every other message here. The new game arrives through the
+ * ordinary onStateChange path, so there's nothing to await. */
+export function requestRematch(room: Room<RoomState>): void {
+  room.send('rematch');
+}

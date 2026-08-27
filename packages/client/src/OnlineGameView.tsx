@@ -9,12 +9,20 @@ interface Props {
 }
 
 export function OnlineGameView({ session, onBackgroundChange }: Props) {
-  const { state, play, passCurrentHand, lastPlanRef, turnDeadline } = useOnlineGameState(session.room);
+  const { state, play, passCurrentHand, rematch, lastPlanRef, turnDeadline } = useOnlineGameState(session.room);
+  // Seat 0 is the host, the same seat that had to press Start Game to begin with (see
+  // GameRoom.handleStartGame/handleRematch) - one player decides for the table instead of
+  // six win screens racing each other. Everyone else gets the hint text in the button's
+  // place so the win screen doesn't read as a dead end.
+  const isHost = session.mySeat === 0;
   return (
     <GameBoard
       state={state}
       play={play}
       passCurrentHand={passCurrentHand}
+      restart={isHost ? rematch : undefined}
+      restartLabel="Rematch"
+      restartHint={isHost ? undefined : `Waiting for ${session.playerNames[0] || 'the host'} to start a rematch.`}
       lastPlanRef={lastPlanRef}
       mySeat={session.mySeat}
       colors={session.colors}

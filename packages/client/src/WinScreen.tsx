@@ -7,6 +7,15 @@ interface Props {
   colors: number[];
   playerNames?: string[];
   onPlayAgain?: () => void;
+  /** Defaults to 'Play Again' (local hotseat, where it really is just another game on this
+   * device). Online passes 'Rematch' - same seats, same room, same people, which is what
+   * that word means to the players and what the hint below calls it too. */
+  playAgainLabel?: string;
+  /** Shown in the button's place when onPlayAgain is absent - online, only the host can
+   * start a rematch (see GameRoom.handleRematch), and everyone else needs to be told that's
+   * what they're waiting on rather than being left with a win screen that looks like a dead
+   * end. Undefined for local hotseat, which always has its own Play Again. */
+  playAgainHint?: string;
 }
 
 // Reload rather than a React-level "back to lobby" - GameView's Phaser instance is
@@ -18,7 +27,7 @@ function backToLobby() {
   window.location.reload();
 }
 
-export function WinScreen({ state, colors, playerNames, onPlayAgain }: Props) {
+export function WinScreen({ state, colors, playerNames, onPlayAgain, playAgainLabel = 'Play Again', playAgainHint }: Props) {
   if (state.phase !== 'gameEnd' || !state.winners) return null;
   const isTeamWin = state.winners.length > 1;
 
@@ -37,11 +46,17 @@ export function WinScreen({ state, colors, playerNames, onPlayAgain }: Props) {
           ))}
         </div>
         <div className="win-screen__actions">
-          {onPlayAgain && (
+          {onPlayAgain ? (
             <button type="button" className="cp-button" onClick={onPlayAgain}>
-              Play Again
+              {playAgainLabel}
             </button>
-          )}
+          ) : playAgainHint ? (
+            /* aria-live: the host can start the rematch at any moment, and when they do this
+               whole dialog unmounts with no other cue. Announcing the wait when the dialog
+               opens is what makes that disappearance read as "the host started it" rather
+               than the screen just vanishing. */
+            <p className="win-screen__hint" aria-live="polite">{playAgainHint}</p>
+          ) : null}
           <button type="button" className="cp-button" onClick={backToLobby}>
             Change Settings
           </button>

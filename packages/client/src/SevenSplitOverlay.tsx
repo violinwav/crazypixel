@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { planMovement, trackLengthFor } from '@crazypixel/shared';
+import { captureIndicesFor, planMovement, trackLengthFor } from '@crazypixel/shared';
 import type { GameState, Marble, Move, PlayerId } from '@crazypixel/shared';
 import { trackPoint, homeSlotPoint } from './game/boardLayout';
 import type { BoardGeometry, Point } from './game/boardLayout';
@@ -20,6 +20,16 @@ function marbleLabel(marble: Marble): string {
 const PATH_DOT_SIZE = 8;
 const TARGET_SIZE = 44;
 const SEVEN_TOTAL = 7;
+
+/** Spoken counterpart of the red path dots - the red highlight is the only visual sign that
+ * this allocation burns marbles on the way through, so the marble's own label has to say the
+ * same thing (WCAG 1.4.1). */
+function captureLabelFor(state: GameState, marble: Marble, steps: number): string {
+  if (steps <= 0) return '';
+  const count = captureIndicesFor(state, marble, steps, 'passOver').length;
+  if (count === 0) return '';
+  return count === 1 ? ', sends a marble home' : `, sends ${count} marbles home`;
+}
 
 type SplitSevenMove = Extract<Move, { kind: 'splitSeven' }>;
 
@@ -136,14 +146,21 @@ export function SevenSplitOverlay({ state, moves, geo, onPlay }: Props) {
 
         const plan = planMovement(state, marble, steps);
         const pathDots: Point[] = plan.trackPassed.map((i) => trackPoint(i, trackLength, geo));
+        // Which of those squares the 7 would burn on the way through. Computed against the
+        // real state per marble, not against the board as the other segments would leave it
+        // - same simplification the path preview above already makes, so the dots and their
+        // red highlight always describe the same hypothetical move.
+        const captured = new Set(captureIndicesFor(state, marble, steps, 'passOver'));
+        const dotCaptures = plan.trackPassed.map((i) => captured.has(i));
         if (plan.location.zone === 'home') {
           pathDots.push(homeSlotPoint(state.config, marble.owner, plan.location.index, geo));
+          dotCaptures.push(false);
         }
 
         return pathDots.map((p, i) => (
           <div
             key={`${marbleId}-${i}`}
-            className="board-overlay__path-dot board-overlay__path-dot--active"
+            className={`board-overlay__path-dot board-overlay__path-dot--active${dotCaptures[i] ? ' board-overlay__path-dot--capture' : ''}`}
             style={{ left: p.x - PATH_DOT_SIZE / 2, top: p.y - PATH_DOT_SIZE / 2, width: PATH_DOT_SIZE, height: PATH_DOT_SIZE }}
           />
         ));
@@ -161,7 +178,7 @@ export function SevenSplitOverlay({ state, moves, geo, onPlay }: Props) {
             className={`board-overlay__target board-overlay__figure${isActive ? ' board-overlay__figure--active' : ''}`}
             style={{ left: point.x - TARGET_SIZE / 2, top: point.y - TARGET_SIZE / 2, width: TARGET_SIZE, height: TARGET_SIZE }}
             aria-pressed={isActive}
-            aria-label={`${marbleLabel(marble)}${steps > 0 ? `, ${steps} of 7 allocated so far` : ''}`}
+            aria-label={`${marbleLabel(marble)}${steps > 0 ? `, ${steps} of 7 allocated so far` : ''}${captureLabelFor(state, marble, steps)}`}
             onClick={() => setActiveMarbleId(marbleId)}
           />
         );
