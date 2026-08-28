@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Card, GameState, Move, PlayerId } from '@crazypixel/shared';
 import type { Room } from 'colyseus.js';
-import { requestRematch, sendStealIntent } from './network';
-import type { RoomState, StealIntentMessage } from './network';
+import { requestRematch, sendEmote, sendStealIntent } from './network';
+import type { EmoteMessage, RoomState, StealIntentMessage } from './network';
 import { EMPTY_TURN_ANIMATION, planCaptures } from './animationPlan';
 import type { TurnAnimation } from './animationPlan';
 
@@ -14,6 +14,24 @@ import type { TurnAnimation } from './animationPlan';
 // (see design doc's out-of-scope note on server-driven animations). capturedMarbleIds is
 // the exception - planCaptures is a pure before/after zone diff that never needed the Move
 // in the first place, so the capture flash works online exactly as it does locally.
+
+// How many emotes the feed holds at once. Small on purpose - this is a HUD strip beside the
+// discard pile, not a chat log, and the board behind it has to stay readable. Older entries
+// fall off the top rather than scrolling.
+const MAX_FEED = 4;
+// How long a single emote survives if nothing pushes it out first. Long enough to answer one
+// (the cooldown is 1.2s server-side), short enough that a quiet table clears itself back to a
+// bare board instead of leaving stale reactions parked over it.
+const EMOTE_TTL_MS = 6500;
+
+/** One emote as the feed holds it. `id` is the server's own counter (see
+ * GameRoom.handleEmote), so identical emotes sent back to back stay distinct entries. */
+export interface FeedEmote {
+  id: number;
+  by: PlayerId;
+  emoteId: string;
+}
+
 export function useOnlineGameState(room: Room<RoomState>) {
   const [state, setState] = useState<GameState>(() => JSON.parse(room.state.stateJson) as GameState);
   const [turnDeadline, setTurnDeadline] = useState(room.state.turnDeadline);
@@ -28,6 +46,9 @@ export function useOnlineGameState(room: Room<RoomState>) {
   // "Someone has singled out a hand to steal from, but hasn't committed to a card yet" -
   // ephemeral, broadcast-only, never part of stateJson (see GameRoom.handleStealIntent).
   const [stealIntent, setStealIntent] = useState<StealIntentMessage | null>(null);
+  // Newest last. Same ephemeral, broadcast-only shape as stealIntent above - emotes are
+  // never part of stateJson (see GameRoom.handleEmote for why).
+  const [emotes, setEmotes] = useState<FeedEmote[]>([]);
 
   useEffect(() => {
     const applyStateJson = () => {
@@ -61,6 +82,24 @@ export function useOnlineGameState(room: Room<RoomState>) {
     };
     room.onStateChange(applyStateJson);
     room.onMessage('stealIntent', (message: StealIntentMessage) => setStealIntent(message));
+    room.onMessage('emote', (message: EmoteMessage) => {
+      // Deduped by the server's own id, for the same reason applyStateJson dedupes on the
+      // raw JSON above: StrictMode double-invokes this effect and there's no unsubscribe, so
+      // colyseus.js ends up with this callback registered twice (its onMessage APPENDS to a
+      // nanoevents list rather than replacing) and every broadcast arrives here twice. Unlike
+      // setStealIntent, appending to a list isn't idempotent - without this every emote shows
+      // up in the feed as two identical entries in dev.
+      setEmotes((prev) => (prev.some((e) => e.id === message.id)
+        ? prev
+        : [...prev, { id: message.id, by: message.by, emoteId: message.emoteId }].slice(-MAX_FEED)));
+      // Expiry is per-message rather than one sweeping interval so each emote gets the full
+      // TTL from its own arrival, not from wherever a shared tick happened to be. Firing
+      // twice under the double-registration above is harmless - removing an id that's already
+      // gone is a no-op that returns the same array.
+      setTimeout(() => {
+        setEmotes((prev) => (prev.some((e) => e.id === message.id) ? prev.filter((e) => e.id !== message.id) : prev));
+      }, EMOTE_TTL_MS);
+    });
     // No unsubscribe - this hook lives for the whole online game session, same lifecycle
     // convention as GameView's Phaser instance and WaitingRoom.tsx's own listener.
   }, [room]);
@@ -81,5 +120,12 @@ export function useOnlineGameState(room: Room<RoomState>) {
     sendStealIntent(room, targetPlayer, card);
   }, [room]);
 
-  return { state, play, passCurrentHand, rematch, lastPlanRef, turnDeadline, stealIntent, announceStealIntent };
+  const emote = useCallback((emoteId: string) => {
+    sendEmote(room, emoteId);
+  }, [room]);
+
+  return {
+    state, play, passCurrentHand, rematch, lastPlanRef, turnDeadline, stealIntent, announceStealIntent,
+    emotes, emote,
+  };
 }

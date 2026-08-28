@@ -9,7 +9,10 @@ interface Props {
 }
 
 export function OnlineGameView({ session, onBackgroundChange }: Props) {
-  const { state, play, passCurrentHand, rematch, lastPlanRef, turnDeadline, stealIntent, announceStealIntent } = useOnlineGameState(session.room);
+  const {
+    state, play, passCurrentHand, rematch, lastPlanRef, turnDeadline, stealIntent, announceStealIntent,
+    emotes, emote,
+  } = useOnlineGameState(session.room);
   // Seat 0 is the host, the same seat that had to press Start Game to begin with (see
   // GameRoom.handleStartGame/handleRematch) - one player decides for the table instead of
   // six win screens racing each other. Everyone else gets the hint text in the button's
@@ -33,6 +36,11 @@ export function OnlineGameView({ session, onBackgroundChange }: Props) {
       // doing, which local hotseat (one shared screen, see GameView) has no equivalent of.
       stealIntent={stealIntent}
       onStealIntent={announceStealIntent}
+      // Online only, same as the steal warning above - an emote is a message to someone
+      // looking at a different screen, which local hotseat (one shared device, see GameView)
+      // has no equivalent of.
+      emotes={emotes}
+      onEmote={emote}
     />
   );
 }

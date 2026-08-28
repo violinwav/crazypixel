@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
-import { activePlayerIds, trackLengthFor } from '@crazypixel/shared';
+import { activePlayerIds, emoteById, trackLengthFor } from '@crazypixel/shared';
 import type { Card, GameState, Move, PlayerId } from '@crazypixel/shared';
 import { createPhaserGame } from './game/PhaserGame';
 import type { PhaserBridge } from './game/PhaserGame';
@@ -15,11 +15,14 @@ import { TurnLabel } from './TurnLabel';
 import { TurnTimerBar } from './TurnTimerBar';
 import { FlyingCard } from './FlyingCard';
 import type { FlightPlan } from './FlyingCard';
+import type { FeedEmote } from './game/useOnlineGameState';
 import { DealAnimation } from './DealAnimation';
 import type { DealPlan } from './DealAnimation';
 import { StealTransfer } from './StealTransfer';
 import type { StealTransferPlan } from './StealTransfer';
 import { StealAlert } from './StealAlert';
+import { EmoteFeed } from './EmoteFeed';
+import { EmotePicker } from './EmotePicker';
 import { WinScreen } from './WinScreen';
 import { playerLabel } from './game/playerName';
 import { hueToCss } from './game/color';
@@ -107,12 +110,23 @@ interface Props {
    * into `target`'s hand with `card`, so everyone else can be warned and can lay that card
    * on the pile at the same moment this client does. Online only, same as above. */
   onStealIntent?: (target: PlayerId, card: Card) => void;
+  /** Recent emotes to show beside the discard pile, newest last - online only (see
+   * useOnlineGameState). Local hotseat passes nothing and renders no emote UI at all: an
+   * emote is a message to someone looking at a different screen, and everyone sharing one
+   * device can just say it out loud. */
+  emotes?: FeedEmote[];
+  /** Sends one emote id from the shared EMOTES catalogue. Its presence is what turns the
+   * emote HUD on, so it and `emotes` always arrive together. */
+  onEmote?: (emoteId: string) => void;
 }
 
+const EMOTES_MUTED_KEY = 'crazypixel.emotesMuted';
+
 export function GameBoard({
-  state, play, passCurrentHand, restart, restartLabel, restartHint, lastPlanRef, mySeat, viewerSeat = mySeat, colors, playerNames, turnDeadline, onBackgroundChange, stealIntent, onStealIntent,
+  state, play, passCurrentHand, restart, restartLabel, restartHint, lastPlanRef, mySeat, viewerSeat = mySeat, colors, playerNames, turnDeadline, onBackgroundChange, stealIntent, onStealIntent, emotes, onEmote,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const canvasMountRef = useRef<HTMLDivElement>(null);
   const handPanelRef = useRef<HTMLDivElement>(null);
   const bridgeRef = useRef<PhaserBridge | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
@@ -145,12 +159,31 @@ export function GameBoard({
   // ELSE'S move took it" (a steal) - see the effect below. Not used for anything else;
   // GameBoard doesn't otherwise need history.
   const prevStateRef = useRef<GameState | null>(null);
+  // Hides the feed and stops feeding the announcement log. Persisted so a player who doesn't
+  // want reactions in the corner doesn't have to re-mute every game - a stream of emotes from
+  // five other seats is motion parked over the board for the whole match, and turning it off
+  // has to be one control, not a per-message dismiss.
+  const [emotesMuted, setEmotesMuted] = useState(() => {
+    try {
+      return window.localStorage.getItem(EMOTES_MUTED_KEY) === '1';
+    } catch {
+      return false; // Safari private mode throws on localStorage access rather than no-oping.
+    }
+  });
+  const handleMutedChange = useCallback((muted: boolean) => {
+    setEmotesMuted(muted);
+    try {
+      window.localStorage.setItem(EMOTES_MUTED_KEY, muted ? '1' : '0');
+    } catch {
+      // Preference just doesn't persist - not worth failing the toggle over.
+    }
+  }, []);
 
   const isMyTurn = mySeat === state.currentPlayer;
 
   useEffect(() => {
-    if (!containerRef.current || bridgeRef.current) return;
-    bridgeRef.current = createPhaserGame(containerRef.current);
+    if (!canvasMountRef.current || bridgeRef.current) return;
+    bridgeRef.current = createPhaserGame(canvasMountRef.current);
     bridgeRef.current.setColorAssignment(colors);
     // No cleanup/destroy on purpose - see GameView's original comment (StrictMode's
     // dev-only double-invoke tearing down a Phaser.Game mid-boot leaves an orphaned
@@ -279,6 +312,17 @@ export function GameBoard({
   // the board overlay silently mounts or unmounts based on isMyTurn with no other cue for a
   // screen reader user that the board just became (or stopped being) interactive.
   const turnAnnouncement = isMyTurn ? "It's your turn." : `Waiting for ${playerLabel(playerNames, state.currentPlayer)}.`;
+
+  // The win screen is position:fixed over the whole viewport with no focus trap, so an emote
+  // HUD left mounted underneath it would be invisible but still tabbable - a focused control
+  // completely hidden behind an overlay. Emotes end with the game rather than being reachable
+  // through it.
+  const emotesEnabled = onEmote !== undefined && state.phase !== 'gameEnd';
+  const visibleEmotes = emotesMuted ? [] : (emotes ?? []);
+  // Your own emotes are skipped - you pressed the button, and every announcement here is
+  // competing for the same polite queue as the turn narration. Names are user-authored, so
+  // they're capped: a 200-character display name is a denial of service on a screen reader.
+  const announcedEmotes = visibleEmotes.filter((e) => e.by !== mySeat);
 
   const selectedCard = state.hands[state.currentPlayer].find((c) => c.id === selectedCardId) ?? null;
 
@@ -432,12 +476,22 @@ export function GameBoard({
   return (
     <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <h1 className="visually-hidden">CrazyPixel</h1>
-      <div
-        ref={containerRef}
-        role="img"
-        aria-label={`Game board. ${playerLabel(playerNames, state.currentPlayer)}'s turn.`}
-        style={{ flex: 1, minHeight: 0, position: 'relative' }}
-      >
+      <div ref={containerRef} style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        {/* role="img" scoped to the Phaser canvas alone, NOT to the whole board area. `img`
+            is a children-presentational role: everything inside it is pruned from the
+            accessibility tree, so while this label sat on the container it was silently
+            swallowing every real control positioned over the canvas - BoardOverlay's move
+            buttons, BoardStatus's "Lay down cards", and now the emote picker - leaving a
+            screen reader one flat "Game board, image" node and no way to play at all. The
+            canvas gets its own mount element (see createPhaserGame above); the DOM layer
+            stays a sibling of it, sharing the container's coordinate system exactly as
+            before. */}
+        <div
+          ref={canvasMountRef}
+          className="board-canvas"
+          role="img"
+          aria-label={`Game board. ${playerLabel(playerNames, state.currentPlayer)}'s turn.`}
+        />
         <OpponentHandCounts
           state={state}
           containerSize={containerSize}
@@ -468,12 +522,49 @@ export function GameBoard({
           />
         )}
         {isMyTurn && <BoardStatus state={state} containerSize={containerSize} onPassHand={passCurrentHand} viewerSeat={viewerSeat} />}
+        {emotesEnabled && (
+          <EmoteFeed
+            emotes={visibleEmotes}
+            state={state}
+            containerSize={containerSize}
+            viewerSeat={viewerSeat}
+            colors={colors}
+            playerNames={playerNames}
+          />
+        )}
+        {emotesEnabled && (
+          <EmotePicker
+            state={state}
+            containerSize={containerSize}
+            viewerSeat={viewerSeat}
+            onEmote={onEmote!}
+            muted={emotesMuted}
+            onMutedChange={handleMutedChange}
+          />
+        )}
       </div>
       {/* Board state changes are driven from here, not narrated by the canvas itself - the
           canvas has no way to expose that to assistive tech, this text does. */}
       <p aria-live="polite" className="visually-hidden">
         {stealAnnouncement} {lastMoveAnnouncement} {turnAnnouncement}
       </p>
+      {/* Emotes get their own region rather than joining the line above, because that one is
+          three interpolated strings in a single text node: changing any part of it re-reads
+          the whole thing, so every emote would drag "Waiting for Player 3" along behind it.
+          role="log" is append-only by definition (aria-relevant defaults to additions, so the
+          6.5s expiries are silent) and NOT implicitly atomic the way role="status" is, which
+          would re-read all four lines on each arrival. aria-live is set alongside the role
+          because VoiceOver's own support for bare role="log" is unreliable. Two polite
+          regions serialize rather than interrupt each other. Rendered whether or not there's
+          anything in it - a live region only announces mutations observed after it's in the
+          DOM, so one mounted on its first message never announces that message. */}
+      {emotesEnabled && (
+        <div role="log" aria-live="polite" className="visually-hidden">
+          {announcedEmotes.map((entry) => (
+            <span key={entry.id}>{`${playerLabel(playerNames, entry.by).slice(0, 20)}: ${emoteById(entry.emoteId)?.label ?? ''}. `}</span>
+          ))}
+        </div>
+      )}
       <div ref={handPanelRef} className="hand-panel-slot">
         {/* Same vivid dither look as the menu background (denser, brighter, multi-level),
             just tinted to your own seat color instead of white - the app-wide background

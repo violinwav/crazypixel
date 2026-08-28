@@ -57,6 +57,16 @@ export interface StealIntentMessage {
   card: Card;
 }
 
+/** Broadcast by GameRoom whenever any seated player fires off an emote - see
+ * GameRoom.handleEmote. `emoteId` indexes the shared EMOTES catalogue rather than carrying
+ * the glyphs themselves, and `id` is the server's own monotonic counter, so two identical
+ * emotes in a row are still two distinct entries in the feed. */
+export interface EmoteMessage {
+  id: number;
+  by: PlayerId;
+  emoteId: string;
+}
+
 /** What Lobby.tsx hands up to App.tsx once a room's game has actually started - the room
  * itself plus the viewer's own seat and everyone's starting colors/names, snapshotted at
  * that moment (App.tsx.OnlineGameView reads the room's live state for everything after). */
@@ -112,4 +122,14 @@ export function sendStealIntent(room: Room<RoomState>, targetPlayer: PlayerId, c
  * ordinary onStateChange path, so there's nothing to await. */
 export function requestRematch(room: Room<RoomState>): void {
   room.send('rematch');
+}
+
+/** Fires an emote at the whole room. Fire-and-forget like every other send here - the
+ * result comes back through the ordinary 'emote' broadcast (including to this client, which
+ * is what makes the sender's own message appear in the same feed, in the same order,
+ * as everyone else's rather than being echoed locally out of step). The server enforces its
+ * own cooldown and silently drops anything over quota, so a caller can't rely on a send
+ * having landed - the feed is the only confirmation. */
+export function sendEmote(room: Room<RoomState>, emoteId: string): void {
+  room.send('emote', { emoteId });
 }

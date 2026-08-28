@@ -1665,3 +1665,204 @@ canvas {
   color: var(--ink-dim);
   text-align: center;
 }
+
+/* ---------------------------------------------------------------------------
+   Emote chat (online only) - EmotePicker.tsx / EmoteFeed.tsx
+   --------------------------------------------------------------------------- */
+
+/* Phaser's canvas mount, split out of the board container so `role="img"` can scope to the
+   canvas alone instead of pruning every DOM control layered over it - see GameBoard.tsx.
+   Absolutely filling the container keeps its box identical to what Phaser measured before,
+   so the Scale Manager sees no change. */
+.board-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* Kaomoji are NOT set in Departure Mono. That face covers exactly one of the ten (see
+   packages/shared/src/emotes.ts) - it has no kana, CJK, Mongolian or Samaritan glyphs - so
+   leaving them on the body font makes the browser fall back per MISSING GLYPH, drawing
+   `¯\_(ツ)_/¯` with its macrons and parens in the pixel face and its ツ in whatever the
+   system offers, at a different width, weight and baseline. One face for the whole kaomoji
+   is the lesser evil: the pixel chrome around it still carries the arcade voice, and these
+   are quoted character art rather than app text. Sans-serif, not monospace, because the
+   monospace defaults on most systems have thinner CJK/kana coverage than the UI face. */
+.emote-glyph {
+  font-family: system-ui, -apple-system, 'Segoe UI Symbol', 'Apple Symbols', 'Noto Sans Symbols 2', sans-serif;
+  font-weight: 400;
+  letter-spacing: 0;
+  white-space: nowrap;
+  /* Kaomoji mix half-width and full-width glyphs, so line boxes vary in height between one
+     emote and the next - a fixed line-height keeps every row in the picker grid and every
+     line in the feed the same height regardless of which face is in it. */
+  line-height: 1.15;
+}
+
+.emote-picker__toggle {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: var(--target-min-touch);
+  height: var(--target-min-touch);
+  min-width: var(--target-min-touch);
+  padding: 0;
+  font-size: 15px;
+  /* Sits over the board's own live area - see .board-status__pass for the same note. */
+  touch-action: manipulation;
+  z-index: 20;
+}
+
+/* Same additive-transform fix .cp-button.board-status__pass needs, and for the same reason:
+   .cp-button:active's own translate(3px, 3px) REPLACES this button's centering transform
+   rather than adding to it, which snaps it half its own width out from under the finger
+   between touchstart and the hit-test at touchend. */
+.emote-picker__toggle:active {
+  transform: translate(calc(-50% + 3px), calc(-50% + 3px));
+}
+
+.emote-picker__panel {
+  position: absolute;
+  /* Opens UPWARD out of the toggle, into the gap between the ring and the hand panel, so it
+     never fully covers a focused move button below it (WCAG 2.4.11) and never prints through
+     the turn label - see --board-bottom-clearance's own note. */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  max-height: calc(100% - var(--board-bottom-clearance));
+  overflow-y: auto;
+  pointer-events: auto;
+  z-index: 30;
+}
+
+.emote-picker__grid {
+  display: grid;
+  /* Two columns rather than one 10-row column: the tall version covered most of the board on
+     a phone, which is the one screen where "doesn't get in the way" actually matters. DOM
+     order is plain reading order, so the tab sequence matches what's on screen and needs no
+     roving tabindex or arrow-key handling. */
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.emote-picker__option {
+  width: 100%;
+  /* Below .cp-button's own 44px, but above WCAG 2.5.8's 24px floor - ten full-size targets
+     stacked two-wide made the panel taller than the board area it's supposed to stay out of.
+     The grid gap above is the spacing that compensates. */
+  min-height: 34px;
+  padding: var(--space-2xs);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+}
+
+.emote-picker__mute {
+  font-size: 11px;
+  min-height: 30px;
+  padding: var(--space-2xs) var(--space-xs);
+}
+
+.emote-feed {
+  position: absolute;
+  display: flex;
+  /* Oldest at the top, newest at the bottom against the pile, without reversing the array -
+     the feed is stored oldest-first so the fade can key off distance from the newest. */
+  flex-direction: column-reverse;
+  /* Stretch, not flex-end - the chips take the column's full fixed width (see FEED_WIDTH in
+     EmoteFeed.tsx) so their left borders line up as one rail instead of each chip shrinking
+     to its own text and staggering its bar. */
+  align-items: stretch;
+  gap: var(--space-2xs);
+  /* Sits directly over live track squares. Without this it would swallow taps meant for the
+     marbles underneath - the same trap .board-overlay documents at the top of this file. */
+  pointer-events: none;
+  z-index: 15;
+}
+
+.emote-feed__line {
+  /* Always two stacked rows - name over kaomoji - never a wrap that depends on how wide the
+     particular kaomoji is. The earlier version shared one line when it fit and folded when it
+     didn't, which meant `(°_°)` (31px) sat on one row while `╾━╤デ╦︻ (•_- )` (103px) took two,
+     so the colour bar was a different height on every message and the names landed at
+     different offsets down the column. One fixed shape per message is what makes the bars
+     read as a single aligned rail. */
+  display: flex;
+  flex-direction: column;
+  /* Left-aligned against the colour bar, so the gap between bar and text is the same on every
+     message. Right-aligning here would leave a short emote like `(°_°)` floating a long way
+     from its own bar. */
+  align-items: flex-start;
+  gap: 0;
+  margin: 0;
+  padding: 3px var(--space-xs);
+  max-width: 100%;
+  color: var(--emote-color);
+  /* Opaque chip, not a bare text overlay: the line sits over the board canvas and whatever
+     the Phaser layer happens to be drawing there, and text with no determinate backdrop has
+     no measurable contrast ratio. The chip is also what carries the visible fade - it holds
+     no text, so it's free to drop all the way out, which is what lets the text itself ramp
+     only 1 -> 0.7 and stay above 4.5:1 (see game/color.ts's hueToTextCss). */
+  background: rgba(0, 0, 0, calc(0.82 * var(--emote-alpha)));
+  border-left: 3px solid var(--emote-color);
+  opacity: var(--emote-alpha);
+  animation: emote-rise 220ms var(--ease-out-quart);
+}
+
+.emote-feed__who {
+  font-family: var(--cp-font-body);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  /* Display names are user-authored and this column is only ~120px wide on a phone. Truncate
+     rather than wrap - the full name is still spoken in full through the log region. */
+  max-width: 9ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: none;
+  /* Explicit box height, matching line-height, for the same reason the glyph below has one. */
+  line-height: 1.3;
+  height: 1.3em;
+}
+
+.emote-feed__glyph {
+  flex: none;
+  /* Shrinks on a narrow viewport so the widest kaomoji still clears the ~110px column beside
+     the discard pile on a 375px phone. */
+  font-size: clamp(12px, 3.4vw, 15px);
+  /* An explicit height, not just a line-height, because a line box grows to fit its tallest
+     inline content: the full-width CJK and Mongolian glyphs in `╾━╤デ╦︻ (•_- )` report far
+     larger ascent/descent than the Latin ones in `(°_°)`, so identical font-sizes still
+     produced boxes ~16px apart in height (measured live: 39.8px vs 24px). Fixing the height in
+     em keeps every message the same size at a given viewport - a taller glyph then paints
+     slightly outside its box (overflow stays visible) instead of shoving the row open and
+     knocking the whole column out of alignment. */
+  line-height: 1.4;
+  height: 1.4em;
+}
+
+/* Transform only - deliberately NOT a fade-in, and deliberately no fill-mode. An earlier
+   version opened at `opacity: 0` with `animation-fill-mode: both`, which makes the message's
+   visibility depend on the animation actually ticking: an animation parked at currentTime 0
+   keeps applying its 0% frame, so anywhere frames stop arriving (a backgrounded or throttled
+   tab - which is exactly what the browser automation pane is, and what PhaserGame.ts already
+   documents having been bitten by) every emote stays fully transparent for its whole 6.5s
+   life and the feed silently shows nothing. Confirmed live: getAnimations() reported
+   `running` with currentTime stuck at 0 across a 3s probe while opacity read 0. Animating
+   only the offset means a frozen animation costs 6px of position and nothing else, and the
+   resting opacity stays the base rule's own value in every phase. The reduced-motion
+   override further up this file collapses the duration to 0.01ms, which now has nothing to
+   settle wrongly onto. */
+@keyframes emote-rise {
+  from {
+    transform: translateY(6px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}

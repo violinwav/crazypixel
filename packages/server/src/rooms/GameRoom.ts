@@ -2,7 +2,7 @@ import { Room, Client } from 'colyseus';
 import type { Delayed } from 'colyseus';
 import { Schema, type, ArraySchema } from '@colyseus/schema';
 import {
-  createInitialState, startGame, getLegalMoves, applyMove, advanceTurn, passHand,
+  createInitialState, startGame, getLegalMoves, applyMove, advanceTurn, passHand, emoteById,
 } from '@crazypixel/shared';
 import type { Card, GameConfig, GameMode, GameState, Move, PlayerId } from '@crazypixel/shared';
 
@@ -13,6 +13,14 @@ const TURN_MS = 20_000;
 // accepts joins up to this cap and starts with however many are actually seated.
 const MAX_PLAYERS = 6;
 const MIN_PLAYERS = 2;
+// Minimum gap between two emotes from the same seat. Emotes are the one thing in this game a
+// player can fire off out of turn and as often as they like, so this is what stops one seat
+// from burying everyone else's feed (which only shows the last few, see EmoteFeed.tsx) under
+// a held-down button. Over-quota sends are dropped silently rather than answered with an
+// error - the sender's own client already greys the picker out for the same window (see
+// EMOTE_COOLDOWN_MS there), so a rejection would only ever be reaching a client that's
+// deliberately ignoring it.
+const EMOTE_COOLDOWN_MS = 1200;
 
 function isValidHue(hue: unknown): hue is number {
   return typeof hue === 'number' && Number.isInteger(hue) && hue >= 0 && hue < 360;
@@ -71,6 +79,11 @@ interface StealIntentMessage {
   card: Card;
 }
 
+interface EmoteMessage {
+  /** An id from the shared EMOTES catalogue - never the glyphs themselves. */
+  emoteId: string;
+}
+
 interface JoinOptions {
   displayName: string;
   hue: number;
@@ -116,6 +129,15 @@ export class GameRoom extends Room<RoomState> {
    * turn clock honour that decision instead of auto-playing something else entirely. Cleared
    * on every commitTurn, so it can never outlive the turn that set it. */
   private pendingSteal: { seat: PlayerId; targetPlayer: PlayerId; cardId: string } | null = null;
+  /** Last emote send time per seat, for EMOTE_COOLDOWN_MS above. Plain array indexed by seat
+   * rather than a Map keyed by sessionId - a seat outlives any one client object, and the
+   * cooldown should follow the seat. */
+  private lastEmoteAt: number[] = [];
+  /** Monotonic per-room counter that gives every broadcast emote a unique id. Generated
+   * server-side, not per-client, so every client keys the same message the same way and two
+   * identical emotes sent back to back are still two distinct entries in the feed rather
+   * than one React element that never re-animates. */
+  private emoteSeq = 0;
 
   async onCreate(options: CreateOptions) {
     this.maxClients = MAX_PLAYERS;
@@ -136,6 +158,7 @@ export class GameRoom extends Room<RoomState> {
     this.onMessage('startGame', (client) => this.handleStartGame(client));
     this.onMessage('rematch', (client) => this.handleRematch(client));
     this.onMessage('stealIntent', (client, message: StealIntentMessage) => this.handleStealIntent(client, message));
+    this.onMessage('emote', (client, message: EmoteMessage) => this.handleEmote(client, message));
   }
 
   /** Rejects a join once the game's started - not redundant with maxClients/lock() below.
@@ -296,6 +319,30 @@ export class GameRoom extends Room<RoomState> {
 
     this.pendingSteal = { seat, targetPlayer, cardId: card.id };
     this.broadcast('stealIntent', { by: seat, target: targetPlayer, card });
+  }
+
+  /** Emotes are chat, not game state: any seated player can send one at any time, including
+   * on someone else's turn and after the game has ended - being unable to react to the move
+   * that just beat you would miss the entire point. Broadcast-only for the same reason the
+   * steal intent is (see handleStealIntent): they have no persistence, so they have no
+   * business in stateJson, where they'd show up in every client's before/after diff as a
+   * state change with no move behind it.
+   *
+   * The wire carries an id from the shared EMOTES catalogue, never the glyphs - a client
+   * that makes up an id is dropped here, which is what keeps this from being an
+   * arbitrary-text channel onto five other people's screens. */
+  private handleEmote(client: Client, { emoteId }: EmoteMessage) {
+    if (this.state.phase !== 'playing') return;
+    const seat = this.seatFor(client);
+    if (seat === null) return;
+    if (typeof emoteId !== 'string' || !emoteById(emoteId)) return;
+
+    const now = Date.now();
+    if (now - (this.lastEmoteAt[seat] ?? 0) < EMOTE_COOLDOWN_MS) return;
+    this.lastEmoteAt[seat] = now;
+
+    this.emoteSeq += 1;
+    this.broadcast('emote', { id: this.emoteSeq, by: seat, emoteId });
   }
 
   private handlePlay(client: Client, { move }: PlayMessage) {

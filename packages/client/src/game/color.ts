@@ -37,3 +37,20 @@ export function hueToHex(hue: number): number {
 export function hueToCss(hue: number): string {
   return `#${hueToHex(hue).toString(16).padStart(6, '0')}`;
 }
+
+// The emote feed's text variant of the same hue. Deliberately brighter than the marble/
+// swatch pastel above, and it exists because that pastel is not a legible text color: at
+// L=68 the worst hue on the wheel (240, where R and G both sit at the HSL floor and only B
+// is high - and R+G carry ~93% of relative luminance) lands at 4.56:1 on the board's own
+// backdrop. That clears WCAG AA for normal text by 1.3%, leaving nothing at all for the
+// feed's fade-with-age ramp to spend - a single step down to 0.9 alpha already fails
+// (3.94:1). At L=82 the same worst hue is 8.30:1, which is what buys the ramp room to reach
+// 0.7 alpha and still measure 4.68:1. Same hue in, so a message still reads as unmistakably
+// that player's color - only the lightness differs, which is the part that was never
+// carrying the identity.
+const TEXT_SATURATION = 85;
+const TEXT_LIGHTNESS = 82;
+
+export function hueToTextCss(hue: number): string {
+  return `hsl(${((hue % 360) + 360) % 360} ${TEXT_SATURATION}% ${TEXT_LIGHTNESS}%)`;
+}
