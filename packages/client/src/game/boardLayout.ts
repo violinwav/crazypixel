@@ -159,6 +159,14 @@ function angleForTrackIndex(index: number, trackLength: number, rotation: number
   return (index / trackLength) * Math.PI * 2 - Math.PI / 2 + rotation;
 }
 
+/** The ring angle a track square sits at, rotation included - exported so a renderer can
+ * draw *along* the ring (TableScene's trail border arc) rather than only at the discrete
+ * square positions trackPoint gives. Same single source of truth as every other point
+ * helper here, so an arc and the squares it runs past can't drift apart. */
+export function trackAngle(index: number, trackLength: number, geo: BoardGeometry): number {
+  return angleForTrackIndex(index, trackLength, geo.rotation);
+}
+
 export function trackPoint(index: number, trackLength: number, geo: BoardGeometry): Point {
   const angle = angleForTrackIndex(index, trackLength, geo.rotation);
   return { x: geo.center.x + Math.cos(angle) * geo.trackRadius, y: geo.center.y + Math.sin(angle) * geo.trackRadius };

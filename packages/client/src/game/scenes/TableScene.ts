@@ -4,7 +4,7 @@ import {
 } from '@crazypixel/shared';
 import type { GameState, Marble, PlayerId } from '@crazypixel/shared';
 import {
-  trackPoint, kennelSlotPoint, homeSlotPoint, drawPileCenter, discardPileCenter, computeBoardGeometry, pieceScaleFor,
+  trackPoint, trackAngle, kennelSlotPoint, homeSlotPoint, drawPileCenter, discardPileCenter, computeBoardGeometry, pieceScaleFor,
 } from '../boardLayout';
 import type { BoardGeometry } from '../boardLayout';
 import { hueToCss, hueToHex } from '../color';
@@ -132,6 +132,22 @@ const TRAIL_ALPHA = 0.6;
 // second marble sitting on the tile - small enough that the track tile underneath still
 // shows around it.
 const TRAIL_SIZE_RATIO = 0.72;
+// The second half of the trail: a line drawn just outside the ring, one segment per square
+// walked, so the move also reads as a border being built around the board and then draining
+// away. Same per-segment hold/fade clock as the square markers, so the two halves of the
+// effect stay locked together rather than being two animations that happen to overlap.
+// Radius sits in the empty band between the track ring (1.0) and the kennels
+// (boardLayout.ts's KENNEL_RATIO, ~1.18), so it never crowds either.
+const TRAIL_ARC_RATIO = 1.09;
+// Reference px (scaled by pieceScale) for both the thickness of the line and the spacing of
+// the squares it's built from - a chain of small squares, not a stroked arc, so the border
+// is the same pixel vocabulary as the tiles it runs alongside instead of a smooth
+// anti-aliased curve laid over a blocky board.
+const TRAIL_ARC_PIXEL = 5;
+// Its own alpha, not TRAIL_ALPHA: a thin line reads fainter than a filled square at the same
+// opacity, and unlike the square markers it can't be mistaken for a marble, so it doesn't
+// need to stay as far down.
+const TRAIL_ARC_ALPHA = 0.55;
 // Track tile sprite pixel size is fixed regardless of player count, but tile *count* scales
 // with it (more players = more, smaller-arc slots around the same-ish ring) - rendering
 // tiles at their full native size left them touching/overlapping, worse the more players
@@ -712,12 +728,16 @@ export class TableScene extends Phaser.Scene {
     if (planned.entersHomeSlot !== null) {
       points.push(homeSlotPoint(config, owner, planned.entersHomeSlot, this.geo));
     }
-    // The square it departs from. planMovement's trackPassed deliberately excludes the
-    // marble's own starting index (it's for blockade/pass-over checks, where the square
-    // you're already on can't block you), but a trail that starts one square along reads as
-    // if the move began somewhere it didn't - so where the piece was standing is marked from
-    // the sprite's own current position, before anything tweens it away.
-    this.spawnTrailMark(sprite.x, sprite.y, hue);
+    // The square it departs from - taken from the plan, not from where the sprite happens to
+    // be sitting: a marble whose previous move is still animating is somewhere between two
+    // squares right now, and starting the trail there marks (and sweeps an arc over) ground
+    // it never covered. See MarbleAnimation.fromTrackIndex.
+    let prevAngle: number | null = null;
+    if (planned.fromTrackIndex !== null) {
+      const from = trackPoint(planned.fromTrackIndex, trackLength, this.geo);
+      this.spawnTrailMark(from.x, from.y, hue);
+      prevAngle = trackAngle(planned.fromTrackIndex, trackLength, this.geo);
+    }
     const step = (i: number) => {
       if (i >= points.length) return;
       const { x, y } = points[i];
@@ -728,12 +748,67 @@ export class TableScene extends Phaser.Scene {
           // On arrival, not on departure, so the trail forms *behind* the marble instead of
           // lighting up the square it's about to step onto.
           this.spawnTrailMark(x, y, hue);
+          // Only the track legs get a border segment - the last leg of a home entry leaves
+          // the ring entirely (it ends on a home slot well inside it), and an arc drawn
+          // along the ring for that leg would point at a square the marble never stood on.
+          if (i < planned.trackIndices.length) {
+            const angle = trackAngle(planned.trackIndices[i], trackLength, this.geo);
+            // Null only for a walk that didn't start on the ring (a home-stretch shuffle) -
+            // the line simply starts at the first square actually walked instead.
+            if (prevAngle !== null) this.spawnTrailArc(prevAngle, angle, hue);
+            prevAngle = angle;
+          }
           if (arrivingHome) this.playHomeArrival(sprite);
           step(i + 1);
         },
       });
     };
     step(0);
+  }
+
+  /** One segment of the border line, spanning the ring angle between two consecutive
+   * squares, just outside the track (TRAIL_ARC_RATIO). Built as a chain of small squares
+   * rather than a stroked arc - see TRAIL_ARC_PIXEL.
+   *
+   * The span is taken as the *shortest* way round, which is what makes the wraparound leg
+   * (last square -> square 0) draw the one-square hop it actually is instead of a line
+   * almost all the way back around the board, and what lets a backward move (the 4 card)
+   * draw its segments in the direction it really walks.
+   *
+   * Squares are laid from just past `fromAngle` through `toAngle` inclusive, so consecutive
+   * segments meet without overlapping - two semi-transparent squares stacked on the same
+   * pixel would blend to a brighter dot at every joint, turning a continuous line into a
+   * dotted one. */
+  private spawnTrailArc(fromAngle: number, toAngle: number, hue: number) {
+    if (!this.trailLayer) return;
+    const radius = this.geo.trackRadius * TRAIL_ARC_RATIO;
+    let delta = toAngle - fromAngle;
+    while (delta > Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+
+    const size = Math.max(2, TRAIL_ARC_PIXEL * this.pieceScale);
+    const count = Math.max(1, Math.ceil((Math.abs(delta) * radius) / size));
+    const arc = this.add.graphics();
+    arc.fillStyle(hueToHex(hue), 1);
+    for (let i = 1; i <= count; i++) {
+      const angle = fromAngle + (delta * i) / count;
+      arc.fillRect(
+        this.geo.center.x + Math.cos(angle) * radius - size / 2,
+        this.geo.center.y + Math.sin(angle) * radius - size / 2,
+        size,
+        size,
+      );
+    }
+    arc.setAlpha(TRAIL_ARC_ALPHA);
+    this.trailLayer.add(arc);
+    this.tweens.add({
+      targets: arc,
+      alpha: 0,
+      delay: TRAIL_HOLD_MS,
+      duration: TRAIL_FADE_MS,
+      ease: 'Quad.easeIn',
+      onComplete: () => arc.destroy(),
+    });
   }
 
   /** One fading square of a marble's walked path, in that marble's own color - the longer

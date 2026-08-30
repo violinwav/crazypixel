@@ -57,6 +57,15 @@ export interface MarbleAnimation {
    * set). 'teleport': straight tween, no path (a swap doesn't correspond to a track walk). */
   kind: 'walk' | 'teleport';
   trackIndices: number[];
+  /** The track square the marble departs from, or null if it wasn't on the track (a
+   * home-stretch shuffle, a teleport). planMovement's trackPassed deliberately omits it -
+   * it exists for blockade/pass-over checks, where the square you're already standing on
+   * can't block you - but an animation has to know where the walk *starts*, and reading it
+   * off the sprite's current screen position instead is wrong exactly when it matters: a
+   * marble whose previous animation is still in flight isn't standing where it logically
+   * is (that drew the trail's border arc from a stale mid-flight angle, sweeping back over
+   * squares the marble never walked). */
+  fromTrackIndex: number | null;
   /** Set when the walk's final leg carries the marble into its home stretch - TableScene
    * appends one more step to this slot's screen position after the track portion. */
   entersHomeSlot: number | null;
@@ -80,25 +89,27 @@ export function planAnimation(state: GameState, move: Move): MarbleAnimation[] {
         marbleId: move.marbleId,
         kind: 'walk',
         trackIndices: plan.trackPassed,
+        fromTrackIndex: marble.location.zone === 'track' ? marble.location.index : null,
         entersHomeSlot: plan.location.zone === 'home' ? plan.location.index : null,
       }];
     }
     case 'splitSeven':
       return move.steps.map((segment) => {
         const marble = state.marbles.find((m) => m.id === segment.marbleId);
-        if (!marble) return { marbleId: segment.marbleId, kind: 'walk' as const, trackIndices: [], entersHomeSlot: null };
+        if (!marble) return { marbleId: segment.marbleId, kind: 'walk' as const, trackIndices: [], fromTrackIndex: null, entersHomeSlot: null };
         const plan = planMovement(state, marble, segment.steps);
         return {
           marbleId: segment.marbleId,
           kind: 'walk' as const,
           trackIndices: plan.trackPassed,
+          fromTrackIndex: marble.location.zone === 'track' ? marble.location.index : null,
           entersHomeSlot: plan.location.zone === 'home' ? plan.location.index : null,
         };
       });
     case 'swapJack':
       return [
-        { marbleId: move.marbleIdA, kind: 'teleport', trackIndices: [], entersHomeSlot: null },
-        { marbleId: move.marbleIdB, kind: 'teleport', trackIndices: [], entersHomeSlot: null },
+        { marbleId: move.marbleIdA, kind: 'teleport', trackIndices: [], fromTrackIndex: null, entersHomeSlot: null },
+        { marbleId: move.marbleIdB, kind: 'teleport', trackIndices: [], fromTrackIndex: null, entersHomeSlot: null },
       ];
     case 'startMarble':
     case 'forceDraw':
