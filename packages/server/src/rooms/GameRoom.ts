@@ -52,6 +52,17 @@ class RoomState extends Schema {
    * itself is still colyseus's own long internal id, never shown to a player. */
   @type('string') code = '';
   @type('string') stateJson = '';
+  /** The `Move` that produced the current stateJson, as JSON ('' for a pass, a fresh deal,
+   * or before the first move). Purely for animation: clients only ever see before/after
+   * GameState snapshots, which is enough to place a marble but not to know *how* it got
+   * there, so without this every remote move reads as a piece teleporting to its
+   * destination (see useOnlineGameState's planTurn call). Deliberately a Schema field
+   * rather than a broadcast message - it changes in the same patch as stateJson, so a
+   * client can never decode a move against the wrong snapshot, which is exactly the
+   * ordering guarantee a broadcast racing the state patch can't give (same reasoning the
+   * steal intent uses to go the *other* way - see handleStealIntent). Leaks nothing
+   * hidden: a move's card is on the discard pile a frame later anyway. */
+  @type('string') lastMoveJson = '';
   /** Epoch ms when the current turn auto-plays if nobody acts - see scheduleTurnTimeout.
    * 0 before the game starts. Purely informational for clients (TurnTimerBar.tsx); the
    * server-side clock.setTimeout below is what actually enforces it. */
@@ -212,7 +223,7 @@ export class GameRoom extends Room<RoomState> {
    * player, commits it as the new authoritative state, and re-arms the turn clock -
    * shared by a real player's move/pass and the auto-play fallback so all three stay in
    * sync about what "committing a turn" means. */
-  private commitTurn(mutate: (next: GameState) => void) {
+  private commitTurn(mutate: (next: GameState) => void, move: Move | null = null) {
     const state = this.gameState;
     if (!state) return;
     const next = structuredClone(state);
@@ -221,6 +232,9 @@ export class GameRoom extends Room<RoomState> {
     this.pendingSteal = null;
     this.gameState = next;
     this.state.stateJson = JSON.stringify(next);
+    // Set alongside stateJson (same patch) so clients decode the move against the snapshot
+    // it actually applied to - see RoomState.lastMoveJson.
+    this.state.lastMoveJson = move ? JSON.stringify(move) : '';
     // A finished game gets no new clock. Without this the 20s timer stayed armed after the
     // winning move and autoPlayTurn kept committing real moves on an ended game every 20s
     // forever (confirmed by driving the engine directly: winners/phase stick, since
@@ -279,7 +293,7 @@ export class GameRoom extends Room<RoomState> {
     this.commitTurn((next) => {
       if (chosen) applyMove(next, seat, chosen);
       else passHand(next, seat);
-    });
+    }, chosen);
   }
 
   /** Purely cosmetic side-channel: "the player whose turn it is has picked whose hand to
@@ -355,7 +369,7 @@ export class GameRoom extends Room<RoomState> {
     const isLegal = candidates.some((candidate) => JSON.stringify(candidate) === JSON.stringify(move));
     if (!isLegal) return;
 
-    this.commitTurn((next) => applyMove(next, seat, move));
+    this.commitTurn((next) => applyMove(next, seat, move), move);
   }
 
   private handlePassHand(client: Client) {
@@ -403,6 +417,7 @@ export class GameRoom extends Room<RoomState> {
     this.gameState = state;
     this.state.phase = 'playing';
     this.state.stateJson = JSON.stringify(state);
+    this.state.lastMoveJson = '';
     this.scheduleTurnTimeout();
     // Belt-and-suspenders alongside onAuth's phase check above - takes this room out of
     // matchmaking's room-listing results too, not just out of reach for a client that
@@ -437,6 +452,7 @@ export class GameRoom extends Room<RoomState> {
     startGame(state);
     this.gameState = state;
     this.state.stateJson = JSON.stringify(state);
+    this.state.lastMoveJson = '';
     this.scheduleTurnTimeout();
   }
 }

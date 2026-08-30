@@ -42,6 +42,12 @@ export interface RoomState {
    * from room.id, colyseus's own long internal id. */
   code: string;
   stateJson: string;
+  /** The `Move` behind the current stateJson, as JSON ('' for a pass or a fresh deal) - see
+   * GameRoom's RoomState.lastMoveJson. Changes in the same patch as stateJson, so
+   * useOnlineGameState can plan a real movement animation against the snapshot the move
+   * actually applied to instead of tweening every remote marble straight to its
+   * destination. */
+  lastMoveJson: string;
   /** Epoch ms when the current turn auto-plays - see GameRoom.ts's scheduleTurnTimeout. */
   turnDeadline: number;
 }

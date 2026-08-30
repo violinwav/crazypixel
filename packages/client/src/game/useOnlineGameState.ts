@@ -3,17 +3,24 @@ import type { Card, GameState, Move, PlayerId } from '@crazypixel/shared';
 import type { Room } from 'colyseus.js';
 import { requestRematch, sendEmote, sendStealIntent } from './network';
 import type { EmoteMessage, RoomState, StealIntentMessage } from './network';
-import { EMPTY_TURN_ANIMATION, planCaptures } from './animationPlan';
+import { EMPTY_TURN_ANIMATION, planCaptures, planTurn } from './animationPlan';
 import type { TurnAnimation } from './animationPlan';
 
 // Server is authoritative here - play/passCurrentHand only ever send the intent over the
 // network; the resulting GameState comes back through room.onStateChange, never mutated
-// locally. lastPlanRef's `marbles`/`draws` therefore stay empty always: unlike the local
-// engine, this hook only sees before/after GameState snapshots for OTHER players' moves,
-// not the Move itself, so it has nothing to build a real movement-path animation plan from
-// (see design doc's out-of-scope note on server-driven animations). capturedMarbleIds is
-// the exception - planCaptures is a pure before/after zone diff that never needed the Move
-// in the first place, so the capture flash works online exactly as it does locally.
+// locally. The animation plan is built from room.state.lastMoveJson (the Move the server
+// actually applied, synced in the same patch as stateJson - see GameRoom's RoomState) run
+// through the *same* planTurn the local hotseat hook uses, against this client's previous
+// snapshot. That's what makes a remote marble walk its real path square by square instead
+// of tweening straight to its destination: a before/after GameState pair alone says where a
+// marble ended up but nothing about how it got there. Planning it locally rather than
+// shipping a ready-made path also keeps one planner (shared's planMovement) as the only
+// thing that knows the movement rules.
+//
+// capturedMarbleIds stays a pure before/after zone diff (planCaptures) rather than coming
+// off the move - it never needed the Move in the first place, and the diff also catches a
+// capture from a move this client couldn't plan (a pass, or a state that arrived without a
+// move behind it at all).
 
 // How many emotes the feed holds at once. Small on purpose - this is a HUD strip beside the
 // discard pile, not a chat log, and the board behind it has to stay readable. Older entries
@@ -63,9 +70,18 @@ export function useOnlineGameState(room: Room<RoomState>) {
       // track or home in the finished game as "just sent to kennel" and fire a capture
       // flash for all of them at once, on a board that's actually just been re-dealt.
       const isRematch = prevStateRef.current.phase === 'gameEnd' && next.phase !== 'gameEnd';
+      // Planned against the PREVIOUS snapshot on purpose - that's the state the server ran
+      // the move against, and the one whose marble positions the walk animation starts from.
+      // Empty string means there was no move behind this state (a pass, a fresh deal), and a
+      // rematch is skipped for the same reason its captures are: nothing about the finished
+      // game's last move describes the freshly dealt board that replaced it.
+      const moveJson = room.state.lastMoveJson;
+      const plan = moveJson && !isRematch
+        ? planTurn(prevStateRef.current, JSON.parse(moveJson) as Move)
+        : { marbles: [], draws: [] };
       lastPlanRef.current = {
-        marbles: [],
-        draws: [],
+        marbles: plan.marbles,
+        draws: plan.draws,
         capturedMarbleIds: isRematch ? [] : planCaptures(prevStateRef.current, next),
       };
       prevStateRef.current = next;

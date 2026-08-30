@@ -113,6 +113,25 @@ const KILL_WAVE_LEVELS = [0.15, 0.35, 0.55, 0.8, 1];
 const MOVE_TWEEN_MS = 220;
 const POP_IN_MS = 250;
 const WALK_STEP_MS = 55;
+// Every square a walking marble passes through drops a marker in that marble's own color -
+// see spawnTrailMark. Held at full strength first and only then faded, rather than fading
+// from the instant it's dropped: the point is that the *whole* path stays readable for a
+// beat after the marble has already arrived (online especially, where another player's move
+// is the only thing that ever happens on your screen), not a short comet tail that's gone
+// before the walk even finishes. HOLD is measured per marker from when it's dropped, so a
+// long walk still fades in walking order - oldest square first, like a wake closing behind
+// the piece. HOLD alone exceeds a 13-square walk (13 * WALK_STEP_MS = 715ms), so even the
+// longest single move is fully on screen at once before anything starts disappearing.
+const TRAIL_HOLD_MS = 750;
+const TRAIL_FADE_MS = 900;
+// Deliberately faint: at full-ish opacity a trail square in the marble's own color reads as
+// a second marble parked on that tile, which is exactly the misread the trail is supposed to
+// avoid - it has to say "something passed through here", never "someone is here".
+const TRAIL_ALPHA = 0.6;
+// Of a marble, so a trail square reads as a footprint the piece left behind rather than a
+// second marble sitting on the tile - small enough that the track tile underneath still
+// shows around it.
+const TRAIL_SIZE_RATIO = 0.72;
 // Track tile sprite pixel size is fixed regardless of player count, but tile *count* scales
 // with it (more players = more, smaller-arc slots around the same-ish ring) - rendering
 // tiles at their full native size left them touching/overlapping, worse the more players
@@ -178,6 +197,10 @@ export class TableScene extends Phaser.Scene {
   private killWaves: { x: number; y: number; progress: number }[] = [];
   private boardLayer?: Phaser.GameObjects.Container;
   private decorLayer?: Phaser.GameObjects.Container;
+  /** Holds the fading path markers (see spawnTrailMark). Its own container, because unlike
+   * boardLayer/decorLayer this one is never bulk-cleared on a render - each marker owns its
+   * lifetime via its own fade tween, and a marker outlives the render that spawned it. */
+  private trailLayer?: Phaser.GameObjects.Container;
   private marbleLayer?: Phaser.GameObjects.Container;
   private geo: BoardGeometry = {
     center: { x: 0, y: 0 }, trackRadius: 0, kennelRadius: 0, handCountRadius: 0, homeRadiusOuter: 0, homeRadiusStep: 0, stackOffset: 0, stackCenter: { x: 0, y: 0 }, rotation: 0,
@@ -231,6 +254,9 @@ export class TableScene extends Phaser.Scene {
     this.glowLayer.add(this.glowImage);
     this.boardLayer = this.add.container(0, 0);
     this.decorLayer = this.add.container(0, 0);
+    // Between the board and the marbles in add-order (= draw order): a trail marker paints
+    // over the track tile it marks, and the marble itself paints over its own trail.
+    this.trailLayer = this.add.container(0, 0);
     this.marbleLayer = this.add.container(0, 0);
 
     this.layout();
@@ -278,6 +304,10 @@ export class TableScene extends Phaser.Scene {
   }
 
   private layout() {
+    // Trail markers are placed in screen space, so a resize (or a hotseat rotation snap)
+    // leaves them pointing at squares that have moved out from under them - drop them rather
+    // than re-deriving positions for a decoration that's about to fade out anyway.
+    this.clearTrail();
     this.renderPieces(false); // a resize/re-layout is not a game move - snap, don't tween
   }
 
@@ -677,10 +707,17 @@ export class TableScene extends Phaser.Scene {
   private walkMarble(sprite: Phaser.GameObjects.Image, owner: PlayerId, planned: MarbleAnimation) {
     const config = this.state!.config;
     const trackLength = trackLengthFor(config);
+    const hue = this.colorAssignment[owner];
     const points = planned.trackIndices.map((i) => trackPoint(i, trackLength, this.geo));
     if (planned.entersHomeSlot !== null) {
       points.push(homeSlotPoint(config, owner, planned.entersHomeSlot, this.geo));
     }
+    // The square it departs from. planMovement's trackPassed deliberately excludes the
+    // marble's own starting index (it's for blockade/pass-over checks, where the square
+    // you're already on can't block you), but a trail that starts one square along reads as
+    // if the move began somewhere it didn't - so where the piece was standing is marked from
+    // the sprite's own current position, before anything tweens it away.
+    this.spawnTrailMark(sprite.x, sprite.y, hue);
     const step = (i: number) => {
       if (i >= points.length) return;
       const { x, y } = points[i];
@@ -688,12 +725,52 @@ export class TableScene extends Phaser.Scene {
       this.tweens.add({
         targets: sprite, x, y, duration: WALK_STEP_MS, ease: 'Linear',
         onComplete: () => {
+          // On arrival, not on departure, so the trail forms *behind* the marble instead of
+          // lighting up the square it's about to step onto.
+          this.spawnTrailMark(x, y, hue);
           if (arrivingHome) this.playHomeArrival(sprite);
           step(i + 1);
         },
       });
     };
     step(0);
+  }
+
+  /** One fading square of a marble's walked path, in that marble's own color - the longer
+   * visual record of a move that a piece arriving at its destination can't give on its own,
+   * and the only place in this scene where a player's color is used as pure decoration
+   * rather than piece identity (it's still identity here: whose move you're watching).
+   *
+   * Same chamfered-square silhouette (and same top-left-origin points convention - see
+   * chamferedSquarePoints) as the kennel/goal fields, so a trail square reads as part of the
+   * board's own shape vocabulary rather than a generic particle effect. No stroke: an
+   * outlined square at this size fights the track tile underneath it, and the fill alone is
+   * what carries the color.
+   *
+   * Each marker owns its own lifetime via the fade tween's onComplete, so nothing has to
+   * track or sweep them - the layer is empty again a second or two after any move. */
+  private spawnTrailMark(x: number, y: number, hue: number) {
+    if (!this.trailLayer) return;
+    const size = MARBLE_SIZE * this.pieceScale * TRAIL_SIZE_RATIO;
+    const mark = this.add.polygon(x, y, chamferedSquarePoints(size, FIELD_CHAMFER_RATIO), hueToHex(hue), TRAIL_ALPHA);
+    this.trailLayer.add(mark);
+    this.tweens.add({
+      targets: mark,
+      alpha: 0,
+      delay: TRAIL_HOLD_MS,
+      duration: TRAIL_FADE_MS,
+      ease: 'Quad.easeIn',
+      onComplete: () => mark.destroy(),
+    });
+  }
+
+  /** Kills the fade tweens before destroying their targets - a tween left running against a
+   * destroyed game object is the standard way to get a null-property crash out of Phaser's
+   * tween update a frame later. */
+  private clearTrail() {
+    if (!this.trailLayer) return;
+    for (const mark of this.trailLayer.getAll()) this.tweens.killTweensOf(mark);
+    this.trailLayer.removeAll(true);
   }
 
   /** A quick scale-pop when a marble's walk ends by entering home - home slots sit small
