@@ -37,11 +37,15 @@ const TOGGLE_SIZE = 44;
  * That's also why it's a sibling of BoardOverlay rather than living inside it: the overlay
  * unmounts wholesale on other players' turns.
  *
- * Non-modal by design. It never takes focus on open (the panel simply follows the toggle in
- * DOM order, so Tab lands on the first emote), and it stays open after a send - closing there
- * would drop focus to <body> and dump a keyboard player back at the top of the document,
- * which is also the wrong call for the cooldown, where "send another in a moment" is the
- * expected next action. */
+ * Non-modal by design: it never takes focus on open (the panel simply follows the toggle in
+ * DOM order, so Tab lands on the first emote).
+ *
+ * Sending closes it, and moves focus to the toggle in the same breath. It used to stay open
+ * so that focus couldn't fall to <body>, but a panel left open covers a 300x250 block of the
+ * board - including where the Joker rank picker, the steal overlay and BoardStatus's "lay
+ * down cards" button appear - so the turn right after a chat message read as unplayable.
+ * Explicitly restoring focus to the toggle solves the keyboard half without leaving the board
+ * covered. */
 export function EmotePicker({ state, containerSize, viewerSeat, onEmote, muted, onMutedChange }: Props) {
   const [open, setOpen] = useState(false);
   const [coolingDown, setCoolingDown] = useState(false);
@@ -102,6 +106,9 @@ export function EmotePicker({ state, containerSize, viewerSeat, onEmote, muted, 
     if (coolingDown) return;
     setCoolingDown(true);
     onEmote(emoteId);
+    setOpen(false);
+    // Before the panel unmounts, or focus lands on a removed node and falls to <body>.
+    toggleRef.current?.focus();
   };
 
   return (

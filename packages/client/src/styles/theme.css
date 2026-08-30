@@ -1708,7 +1708,9 @@ canvas {
   font-size: 15px;
   /* Sits over the board's own live area - see .board-status__pass for the same note. */
   touch-action: manipulation;
-  z-index: 20;
+  /* No z-index on purpose - see GameBoard.tsx, where this whole HUD is placed before the
+     game overlays in DOM order so it stacks behind them. Any positive z-index here would
+     lift it back over .board-overlay, which has none of its own. */
 }
 
 /* Same additive-transform fix .cp-button.board-status__pass needs, and for the same reason:
@@ -1731,7 +1733,6 @@ canvas {
   max-height: calc(100% - var(--board-bottom-clearance));
   overflow-y: auto;
   pointer-events: auto;
-  z-index: 30;
 }
 
 .emote-picker__grid {
@@ -1781,7 +1782,6 @@ canvas {
   /* Sits directly over live track squares. Without this it would swallow taps meant for the
      marbles underneath - the same trap .board-overlay documents at the top of this file. */
   pointer-events: none;
-  z-index: 15;
 }
 
 .emote-feed__line {

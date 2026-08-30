@@ -221,6 +221,19 @@ export function GameBoard({
     return () => observer.disconnect();
   }, []);
 
+  // Keyed on the whole state object, NOT on state.currentPlayer. Both hooks hand back a
+  // fresh GameState object per committed move (useGameState clones before mutating,
+  // useOnlineGameState JSON.parses each server snapshot), so this fires exactly once per
+  // turn that actually commits.
+  //
+  // currentPlayer was wrong because it does not always change between two consecutive turns:
+  // advanceTurn skips seats whose hand is empty, so once you're the last player still
+  // holding cards it walks all the way round the table and lands back on you - the value is
+  // identical, the effect never re-runs, and none of this per-turn state ever gets cleared.
+  // stealCommit surviving that way is what left a whole hand inert (interactive is
+  // `isMyTurn && stealCommit === null`, see HandPanel below), so every card read as "no legal
+  // moves" on a turn the player could legally act - reported live, and reproducible any time
+  // a steal lands near the end of a round.
   useEffect(() => {
     setSelectedCardId(null);
     // The commit only ever spans one turn - by the time the turn has moved on, the steal has
@@ -228,7 +241,7 @@ export function GameBoard({
     // and either way state.lastPlayedCard has taken over from pendingLaidCard below.
     setStealCommit(null);
     setIncomingCard(null);
-  }, [state.currentPlayer]);
+  }, [state]);
 
   useEffect(() => {
     if (dealtRoundRef.current === state.roundIndex) return;
@@ -492,6 +505,35 @@ export function GameBoard({
           role="img"
           aria-label={`Game board. ${playerLabel(playerNames, state.currentPlayer)}'s turn.`}
         />
+        {/* Straight after the canvas and before every game overlay, on purpose. The emote HUD
+            is chrome, not play: it has to sit in front of the board art but behind anything
+            the player actually acts on, so a rank picker, a steal overlay or a move target
+            can never end up underneath it. Ordering, not z-index, is what enforces that -
+            these carried z-index 20/30 and so painted over .board-overlay (which has no
+            z-index of its own) no matter where they sat in the DOM, which is exactly how the
+            Joker picker ended up trapped under the emote button. Anything with an explicit
+            z-index further down this tree (.board-status__pass, .turn-label) stays above them
+            for free. */}
+        {emotesEnabled && (
+          <EmoteFeed
+            emotes={visibleEmotes}
+            state={state}
+            containerSize={containerSize}
+            viewerSeat={viewerSeat}
+            colors={colors}
+            playerNames={playerNames}
+          />
+        )}
+        {emotesEnabled && (
+          <EmotePicker
+            state={state}
+            containerSize={containerSize}
+            viewerSeat={viewerSeat}
+            onEmote={onEmote!}
+            muted={emotesMuted}
+            onMutedChange={handleMutedChange}
+          />
+        )}
         <OpponentHandCounts
           state={state}
           containerSize={containerSize}
@@ -522,26 +564,6 @@ export function GameBoard({
           />
         )}
         {isMyTurn && <BoardStatus state={state} containerSize={containerSize} onPassHand={passCurrentHand} viewerSeat={viewerSeat} />}
-        {emotesEnabled && (
-          <EmoteFeed
-            emotes={visibleEmotes}
-            state={state}
-            containerSize={containerSize}
-            viewerSeat={viewerSeat}
-            colors={colors}
-            playerNames={playerNames}
-          />
-        )}
-        {emotesEnabled && (
-          <EmotePicker
-            state={state}
-            containerSize={containerSize}
-            viewerSeat={viewerSeat}
-            onEmote={onEmote!}
-            muted={emotesMuted}
-            onMutedChange={handleMutedChange}
-          />
-        )}
       </div>
       {/* Board state changes are driven from here, not narrated by the canvas itself - the
           canvas has no way to expose that to assistive tech, this text does. */}
