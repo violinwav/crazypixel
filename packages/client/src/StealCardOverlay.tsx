@@ -9,43 +9,46 @@ type ForceDrawMove = Extract<Move, { kind: 'forceDraw' }>;
 
 interface Props {
   state: GameState;
-  /** Top-level legal moves for the selected card, already filtered to ones that are (or
-   * wrap, via copyLastCard/wildAs) a forceDraw - see unwrapForceDraw. */
+  /** Top-level legal moves for the selected card, already filtered to ones that are (or wrap,
+   * via copyLastCard/wildAs) a forceDraw - see unwrapForceDraw. */
   moves: Move[];
   onPlay: (player: PlayerId, move: Move) => void;
-  /** Set when the opponent was already picked one level up (BoardOverlay's figure-select
-   * step now doubles as "whose hand" - see figureTargets.ts) - skips this component's own
-   * opponent chooser and goes straight to the card-position picker. */
+  /** Set when the opponent was already picked one level up - BoardOverlay's figure-select step
+   * doubles as "whose hand" - which skips this component's own opponent chooser.
+   *
+   * Optional in the type, but BoardOverlay (the only call site) always passes it, so the
+   * chooser branch below is currently unreachable. Kept rather than deleted: it is the fallback
+   * for any future caller that reaches a steal without having picked a target first. */
   forcedTarget?: PlayerId;
-  /** Where the target's own card stack sits on the board, in board-overlay coordinates (see
-   * boardLayout's handCountPoint). The reveal flight starts THERE rather than at the tapped
-   * position in the picker row: the picker is an abstract grid at the bottom of the screen,
-   * so a card leaving it says nothing about whose hand it came out of, while a card leaving
-   * the stack hovering over that player's own home row says it without a word. */
+  /** Where the target's card stack sits, in board-overlay coordinates. The reveal flight starts
+   * THERE rather than at the tapped position in the picker row: the picker is an abstract grid
+   * at the bottom of the screen, so a card leaving it says nothing about whose hand it came
+   * from, while a card leaving the stack over that player's own home row says it without a
+   * word. */
   targetFanPoint?: Point;
-  /** Fired once the reveal has been held long enough to read - the hand opens a slot on the
-   * right for the card so it has somewhere to land (see GameBoard's incomingCard). */
+  /** Fired once the reveal has been held long enough to read, so the hand can open a slot for
+   * the card to land in. */
   onIncoming: (card: Card) => void;
 }
 
-/** Unwraps copyLastCard/wildAs down to the underlying forceDraw, same pattern as
- * SevenSplitOverlay's unwrapSplitSeven - so this works the same whether the 2 was played
- * directly, copied by an 8, or impersonated by a Joker. */
-export function unwrapForceDraw(move: Move): ForceDrawMove | null {
+/** Unwraps copyLastCard/wildAs down to the underlying forceDraw, so this works the same whether
+ * the 2 was played directly, copied by an 8, or impersonated by a Joker. */
+function unwrapForceDraw(move: Move): ForceDrawMove | null {
   if (move.kind === 'forceDraw') return move;
   if (move.kind === 'wildAs' || move.kind === 'copyLastCard') return unwrapForceDraw(move.innerMove);
   return null;
 }
 
-// "Draw opponent's card" - a blind steal at *pick* time (the position grid never shows
-// which card is which, so the choice itself is genuinely uninformed). The engine enumerates
-// one legal move per (opponent, hand position), so the UI's job is just: pick whose hand,
-// then pick a position. Choosing whose hand happens one level up (BoardOverlay's figure
-// step) and is irreversible - the card is already face-up on the discard pile by the time
-// this renders - so there is no way out of here but picking a position, or letting the turn
-// clock pick one (GameRoom.autoPlayTurn). Once a position is committed to, StealFlight
-// carries the card back from that player's stack and reveals it in the thief's hand rather
-// than the move applying with an instant teleport.
+/**
+ * The 2's blind steal, at pick time. The position grid never shows which card is which, so the
+ * choice is genuinely uninformed; the engine enumerates one legal move per (opponent, position)
+ * pair, and this component's job is just to pick a position.
+ *
+ * Choosing whose hand happens one level up and is irreversible - the card is already face-up on
+ * the discard pile by the time this renders - so there is no way out but picking a position, or
+ * letting the turn clock pick one (GameRoom.autoPlayTurn). Once committed, StealFlight carries
+ * the card back and reveals it rather than the move applying with an instant teleport.
+ */
 export function StealCardOverlay({ state, moves, onPlay, forcedTarget, targetFanPoint, onIncoming }: Props) {
   const [targetPlayer, setTargetPlayer] = useState<PlayerId | null>(forcedTarget ?? null);
   const [flight, setFlight] = useState<{ plan: StealFlightPlan; move: Move } | null>(null);
@@ -112,16 +115,16 @@ export function StealCardOverlay({ state, moves, onPlay, forcedTarget, targetFan
                 const fromRect = e.currentTarget.getBoundingClientRect();
                 const handRect = document.querySelector('.hand-panel')?.getBoundingClientRect();
                 if (!handRect) {
-                  // No hand panel measured (shouldn't happen in practice) - fall back to
-                  // applying the move directly rather than losing the tap entirely.
+                  // No hand panel measured (shouldn't happen in practice) - apply the move
+                  // directly rather than losing the tap entirely.
                   onPlay(player, match.top);
                   return;
                 }
                 // closest(), not a document-wide query: several .board-overlay layers can be
-                // mounted at once (an 8 offering its own move alongside a copied one), and
-                // this walks up to the exact one targetFanPoint was measured against. They're
-                // all inset:0 over the same container, so any of them would give the same
-                // rect today - this just can't silently stop being true.
+                // mounted at once (an 8 offering its own move alongside a copied one), and this
+                // walks up to the exact one targetFanPoint was measured against. They are all
+                // inset:0 over the same container, so any of them gives the same rect today -
+                // this just can't silently stop being true.
                 const overlayRect = e.currentTarget.closest('.board-overlay')?.getBoundingClientRect();
                 const from = targetFanPoint && overlayRect
                   ? {

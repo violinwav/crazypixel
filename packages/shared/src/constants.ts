@@ -1,3 +1,7 @@
+// Card definitions and the config-aware seat/track helpers every rule is derived from.
+// Player count and team mode are runtime choices (see GameConfig), so anything that used to
+// be a fixed 4-player constant is a function of `config` here.
+
 import type { CardRank, GameConfig, PlayerId } from './types';
 
 export interface CardDef {
@@ -37,15 +41,12 @@ export const ROUND_DEAL_SIZES = [6, 5, 4, 3, 2];
 export const HOME_STRETCH_LENGTH = 4;
 export const KENNEL_SIZE = 4;
 
-/** Squares per player's arm of the track - fixed regardless of player count, so the board
- * itself grows (more total squares) rather than players getting cramped onto a fixed ring.
- * A 4-player game is the same 64-square track it always was; 6 players get 96. */
+/**
+ * Squares per player's arm of the track, fixed regardless of player count - the board grows
+ * with more players rather than cramming them onto a fixed ring. 4 players is a 64-square
+ * track, 6 players is 96.
+ */
 export const ARM_LENGTH = 16;
-
-// --- Config-aware helpers -------------------------------------------------
-// Everything below replaces what used to be fixed PLAYER_IDS/PARTNER_OF/TEAM_OF/
-// START_INDEX/TRACK_LENGTH constants, now that player count and team/FFA mode are runtime
-// choices (see GameConfig) instead of a fixed 4-player, 2-team assumption.
 
 export function trackLengthFor(config: GameConfig): number {
   return ARM_LENGTH * config.playerCount;
@@ -55,21 +56,28 @@ export function activePlayerIds(config: GameConfig): PlayerId[] {
   return Array.from({ length: config.playerCount }, (_, i) => i as PlayerId);
 }
 
-/** Each player's arm starts right after the previous one - player p's start is always at
- * global track index p * ARM_LENGTH, evenly spaced by construction. */
+/**
+ * Player p's start square, always at global track index p * ARM_LENGTH - arms follow each
+ * other around the ring, so seats are evenly spaced by construction. Takes `config` for
+ * signature parity with the other helpers here, even though it doesn't need it.
+ */
 export function startIndexFor(config: GameConfig, player: PlayerId): number {
   return player * ARM_LENGTH;
 }
 
-/** The seat directly opposite in 'teams' mode (e.g. 4P: 0<->2, 1<->3; 6P: 0<->3, 1<->4,
- * 2<->5). No partner in 'ffa' - every player is on their own. */
+/**
+ * The seat directly opposite in 'teams' mode (4P: 0<->2, 1<->3; 6P: 0<->3, 1<->4, 2<->5).
+ * Always null in 'ffa' - every player is on their own.
+ */
 export function partnerOf(config: GameConfig, player: PlayerId): PlayerId | null {
   if (config.mode !== 'teams') return null;
   return ((player + config.playerCount / 2) % config.playerCount) as PlayerId;
 }
 
-/** Every other active player who isn't this player's partner (in 'ffa', that's everyone
- * else, since there are no partners). Used for the custom-2's force-draw target list. */
+/**
+ * Every active player who is neither this player nor their partner - in 'ffa' that's
+ * everyone else. Used for the custom-2's force-draw target list.
+ */
 export function opponentsOf(config: GameConfig, player: PlayerId): PlayerId[] {
   const partner = partnerOf(config, player);
   return activePlayerIds(config).filter((p) => p !== player && p !== partner);

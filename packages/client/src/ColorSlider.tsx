@@ -1,22 +1,21 @@
 import { hueToCss } from './game/color';
 
 interface Props {
+  /** Accessible name only - there is no visible label; see the note on the component. */
   label: string;
   value: number;
   onChange: (hue: number) => void;
 }
 
-// Pastel stops around the full hue wheel, at the same fixed saturation/lightness hueToCss
-// uses for the actual pick - the track has to show what you'll actually get, not a generic
-// rainbow, or dragging to a spot wouldn't land on the color it visually promised.
+// Stops around the full hue wheel at the same fixed saturation/lightness hueToCss uses for the
+// actual pick, so the track shows what you will really get rather than a generic rainbow.
 const TRACK_STOPS = Array.from({ length: 13 }, (_, i) => hueToCss(i * 30));
 
-/** A real <input type="range"> over the full 360-degree hue wheel, at a fixed pastel
- * saturation/lightness - any color on the wheel, not a pick from a preset list. The track
- * itself is painted as that same pastel spectrum so dragging reads as sliding through real
- * colors. No visible label or swatch of its own (`label` is the accessible name only) - the
- * marble preview that opens this slider (MarbleColorPicker.tsx) already shows the current
- * pick, so a second swatch here would just repeat it. */
+/**
+ * A real <input type="range"> over the full 360-degree hue wheel - any color, not a pick from
+ * a preset list. No visible label or swatch of its own: the marble that opens this slider
+ * (MarbleColorPicker.tsx) already shows the current pick, so a second swatch would repeat it.
+ */
 export function ColorSlider({ label, value, onChange }: Props) {
   const gradient = `linear-gradient(to right, ${TRACK_STOPS.join(', ')})`;
 

@@ -1,3 +1,6 @@
+// Networked game. Same GameBoard as local hotseat, fed by the server-backed hook and given
+// the online-only extras: a turn clock, steal warnings and emotes.
+
 import { useOnlineGameState } from './game/useOnlineGameState';
 import { GameBoard } from './GameBoard';
 import type { BoardBackground } from './GameBoard';
@@ -13,10 +16,9 @@ export function OnlineGameView({ session, onBackgroundChange }: Props) {
     state, play, passCurrentHand, rematch, lastPlanRef, turnDeadline, stealIntent, announceStealIntent,
     emotes, emote,
   } = useOnlineGameState(session.room);
-  // Seat 0 is the host, the same seat that had to press Start Game to begin with (see
-  // GameRoom.handleStartGame/handleRematch) - one player decides for the table instead of
-  // six win screens racing each other. Everyone else gets the hint text in the button's
-  // place so the win screen doesn't read as a dead end.
+  // Seat 0 is the host, the same seat that pressed Start Game (see GameRoom.handleRematch) -
+  // one player decides for the table instead of six win screens racing each other. Everyone
+  // else gets hint text in the button's place, so the win screen isn't a dead end.
   const isHost = session.mySeat === 0;
   return (
     <GameBoard
@@ -32,13 +34,10 @@ export function OnlineGameView({ session, onBackgroundChange }: Props) {
       playerNames={session.playerNames}
       turnDeadline={turnDeadline}
       onBackgroundChange={onBackgroundChange}
-      // Online only - the steal warning tells you something a player on ANOTHER screen is
-      // doing, which local hotseat (one shared screen, see GameView) has no equivalent of.
+      // Steal warnings and emotes are online-only: both are messages about someone looking at
+      // a different screen, which local hotseat (one shared device) has no equivalent of.
       stealIntent={stealIntent}
       onStealIntent={announceStealIntent}
-      // Online only, same as the steal warning above - an emote is a message to someone
-      // looking at a different screen, which local hotseat (one shared device, see GameView)
-      // has no equivalent of.
       emotes={emotes}
       onEmote={emote}
     />

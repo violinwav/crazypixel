@@ -1,6 +1,7 @@
-// Mirrors styles/theme.css AND scripts/generate-sprites.py's PALETTE dict. Three copies
-// of the same values across CSS/TS/Python, kept in sync by hand for now - Phaser draws on
-// canvas and needs numeric hex, CSS needs strings, the sprite generator needs RGB tuples.
+// Phaser's numeric-hex copy of the palette. Mirrors styles/theme.css (CSS strings) and
+// scripts/generate-sprites.py's PALETTE (RGB tuples), kept in sync by hand (see CLAUDE.md's
+// Conventions). NOTE: CLAUDE.md says three copies; there is a fourth - TurnTimerBar.tsx's
+// URGENT_COLOR duplicates --player-red as a raw [255, 84, 112] triple.
 export const PALETTE = {
   bgDeep: 0x000000,
   bgPanel: 0x181818,
@@ -8,7 +9,7 @@ export const PALETTE = {
   ink: 0xffffff,
   inkDim: 0x999999,
   accent: 0xffffff,
-  // 6 entries for up to 6 players - red/blue/yellow/green (original 4) + purple/orange.
+  /** Six seats: red/blue/yellow/green, plus purple/orange. */
   players: [0xff5470, 0x3fb0ff, 0xffe66d, 0x38e58f, 0xb967ff, 0xff9f40] as const,
   cardRed: 0xd22c50,
 };

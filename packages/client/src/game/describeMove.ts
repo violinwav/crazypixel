@@ -1,3 +1,6 @@
+// Spoken/written descriptions of a Move. Used for the accessible name of every board target
+// button and for the text fallback when a move has no board position to highlight.
+
 import { planMovement } from '@crazypixel/shared';
 import type { GameState, Marble, Move } from '@crazypixel/shared';
 

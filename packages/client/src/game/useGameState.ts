@@ -1,3 +1,7 @@
+// Local hotseat game state: the engine runs in-process and this hook owns the GameState.
+// Its online counterpart is useOnlineGameState.ts, which exposes the same shape but sends
+// intents to the server instead of mutating anything locally.
+
 import { useCallback, useRef, useState } from 'react';
 import {
   advanceTurn, applyMove, createInitialState, passHand, startGame,
@@ -12,14 +16,13 @@ function newGame(config: GameConfig): GameState {
   return state;
 }
 
-// @crazypixel/shared's engine mutates GameState in place by design (see GameEngine.ts) -
-// fine for its primary use case, but React 18 StrictMode double-invokes a functional
-// setState updater with the *same* previous-state object both times (to help catch
-// impure updaters). Mutating that shared object directly meant the second invocation ran
-// against already-mutated state: passHand+advanceTurn silently advanced the turn twice,
-// applyMove+advanceTurn silently applied the same move twice. Cloning before mutating
-// keeps the two StrictMode invocations independent (same input in, same output out),
-// which is what makes the updater actually pure.
+/**
+ * The engine mutates GameState in place by design, but React 18 StrictMode double-invokes a
+ * functional setState updater with the *same* previous-state object both times. Mutating it
+ * directly meant the second invocation ran against already-mutated state: passHand advanced
+ * the turn twice, applyMove applied the same move twice. Cloning first keeps the two
+ * invocations independent, which is what makes the updater actually pure.
+ */
 function cloneState(state: GameState): GameState {
   return {
     ...state,
@@ -39,13 +42,11 @@ function cloneState(state: GameState): GameState {
 
 export function useGameState(config: GameConfig) {
   const [state, setState] = useState<GameState>(() => newGame(config));
-  // Side-channel, not React state: TableScene needs to know *how* each marble moved (walk
-  // a path vs. teleport) to animate it, computed against the pre-move state before
-  // applyMove touches anything. A ref (not state) because it's read once synchronously
-  // right after the state update commits (see App.tsx), not something that should trigger
-  // its own render. Safe to recompute on StrictMode's double-invoke same as the state
-  // update itself - planAnimation only reads, so calling it twice on equivalent input is
-  // harmless (unlike mutating, which was the actual bug - see cloneState above).
+  // A side-channel rather than React state: TableScene needs to know *how* each marble moved
+  // (walk a path vs. teleport), computed against the pre-move state before applyMove touches
+  // anything. A ref because it's read once synchronously right after the state update
+  // commits (see GameBoard.tsx), not something that should trigger its own render. Safe
+  // under StrictMode's double-invoke - planning only reads.
   const lastPlanRef = useRef<TurnAnimation>(EMPTY_TURN_ANIMATION);
 
   const play = useCallback((player: PlayerId, move: Move) => {
@@ -53,8 +54,8 @@ export function useGameState(config: GameConfig) {
       const plan = planTurn(prev, move);
       const next = cloneState(prev);
       applyMove(next, player, move);
-      // Needs the post-move state too (who actually ended up in kennel), so this can't be
-      // folded into planTurn above, which only ever sees the pre-move snapshot.
+      // Needs the post-move state (who ended up in kennel), so it can't fold into planTurn,
+      // which only ever sees the pre-move snapshot.
       plan.capturedMarbleIds = planCaptures(prev, next);
       lastPlanRef.current = plan;
       advanceTurn(next);

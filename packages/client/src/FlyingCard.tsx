@@ -5,6 +5,9 @@ import { CARD_FACE_SPRITE } from './game/cardArt';
 import { CardRankIndices } from './CardRankIndices';
 
 const FLIGHT_MS = 420;
+// One tick to let the browser paint the resting position before the transform flips. See the
+// effect below for why this is a timeout rather than requestAnimationFrame.
+const START_DELAY_MS = 20;
 
 export interface FlightPlan {
   card: Card;
@@ -17,24 +20,24 @@ interface Props {
   onDone: () => void;
 }
 
-// A DOM clone of the played card, cross-fading from its hand position to the discard
-// pile's on-screen position (translated from Phaser canvas space via App.tsx). The real
-// card button disappears the instant React re-renders the hand from the new state, so this
-// clone is what actually carries the "leaving your hand" motion - two separate elements
-// creating one continuous-looking motion, not a single element crossing a DOM/canvas
-// boundary that doesn't really exist as one coordinate space.
+/**
+ * A DOM clone of the played card, crossing from its hand position to the discard pile and
+ * fading as it goes. The real card button disappears the instant React re-renders the hand
+ * from the new state, so this clone is what carries the "leaving your hand" motion: two
+ * separate elements making one continuous-looking movement, rather than a single element
+ * crossing a DOM/canvas boundary that doesn't exist as one coordinate space.
+ */
 export function FlyingCard({ plan, onDone }: Props) {
   const [animating, setAnimating] = useState(false);
   const { card, from, to } = plan;
 
   useEffect(() => {
-    // Needs the browser to actually paint the initial (non-animating) position before
-    // flipping to the target transform, or the transition has nothing to transition from.
-    // requestAnimationFrame is the textbook way to sequence that - but per PhaserGame.ts's
-    // sizing logic earlier, rAF is unreliable here (throttled in backgrounded/non-focused
-    // tabs). setTimeout doesn't have that dependency.
-    const startTimer = setTimeout(() => setAnimating(true), 20);
-    const doneTimer = setTimeout(onDone, FLIGHT_MS + 20);
+    // The browser has to paint the initial, non-animating position before the transform flips,
+    // or the transition has nothing to transition from. requestAnimationFrame is the textbook
+    // way to sequence that, but it's throttled in backgrounded and unfocused tabs (see
+    // PhaserGame.ts); setTimeout has no such dependency.
+    const startTimer = setTimeout(() => setAnimating(true), START_DELAY_MS);
+    const doneTimer = setTimeout(onDone, FLIGHT_MS + START_DELAY_MS);
     return () => {
       clearTimeout(startTimer);
       clearTimeout(doneTimer);

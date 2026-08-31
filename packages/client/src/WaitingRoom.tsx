@@ -13,11 +13,13 @@ interface Props {
   onReady: (session: OnlineSession) => void;
 }
 
-// Mirrors GameRoom.ts's own MIN_PLAYERS/MAX_PLAYERS - purely for showing the right message
-// client-side before the server's authoritative check runs (handleStartGame re-derives this
-// exact rule server-side regardless of what this component decides to enable/disable).
+// Mirrors GameRoom's MIN_PLAYERS/MAX_PLAYERS, purely so the right message shows before the
+// server's authoritative check runs - handleStartGame re-derives this rule regardless of what
+// this component decides to enable.
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 6;
+// How long the "Copied" confirmation stays up.
+const COPY_FEEDBACK_MS = 2500;
 
 function startReason(mode: RoomState['mode'], filledSeats: number): string {
   if (filledSeats < MIN_PLAYERS) return `Need at least ${MIN_PLAYERS} players - ${filledSeats} joined.`;
@@ -27,19 +29,20 @@ function startReason(mode: RoomState['mode'], filledSeats: number): string {
   return `${filledSeats} of up to ${MAX_PLAYERS} joined - ready to start.`;
 }
 
-/** The room's own lobby screen, shared by the host (who can Start once the room's eligible)
- * and every joiner (who just watches it fill). Extracted out of the old OnlineLobby.tsx step
- * machine into its own file since Lobby.tsx now reaches this screen from two different
- * places (host-create success, and a direct join) rather than one linear step sequence. */
+/**
+ * The room's own lobby screen, shared by the host (who can Start once the room is eligible) and
+ * every joiner (who watches it fill). Its own file rather than a step in a machine, since
+ * Lobby.tsx reaches this screen from two places - host-create success and a direct join.
+ */
 export function WaitingRoom({ room, isHost, identity, onReady }: Props) {
   const [, forceRender] = useState(0);
   const [copyStatus, setCopyStatus] = useState('');
   const [copyError, setCopyError] = useState('');
   const copyTimeoutRef = useRef<number | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  // Guards onReady (a real side effect - hands the finished session up to App, which
-  // unmounts this whole lobby tree) against firing twice, same pattern as
-  // BoardOverlay.tsx's autoPlayedKeyRef - see CLAUDE.md's StrictMode double-invoke note.
+  // Guards onReady - a real side effect, handing the finished session up to App, which unmounts
+  // this whole tree - against firing twice under StrictMode's double-invoke. Same pattern as
+  // BoardOverlay's autoPlayedKeyRef; see CLAUDE.md.
   const readyFiredRef = useRef(false);
 
   useEffect(() => {
@@ -49,8 +52,8 @@ export function WaitingRoom({ room, isHost, identity, onReady }: Props) {
   useEffect(() => {
     const handleChange = () => forceRender((n) => n + 1);
     room.onStateChange(handleChange);
-    // No unsubscribe - this room lives for the whole online session once joined, same
-    // lifecycle convention as GameView's Phaser instance.
+    // No unsubscribe - this room lives for the whole online session once joined, the same
+    // lifecycle convention as GameBoard's Phaser instance.
   }, [room]);
 
   useEffect(() => () => {
@@ -72,10 +75,9 @@ export function WaitingRoom({ room, isHost, identity, onReady }: Props) {
     });
   });
 
-  // Your color lives in one place now (the profile strip up top, PlayerIdentity.tsx via
-  // MarbleColorPicker) - this just relays a change to the server whenever it happens while
-  // you're seated here, instead of this screen having its own separate slider that could
-  // drift from what the profile strip shows.
+  // Color lives in one place, the profile strip. This only relays a change to the server while
+  // you are seated here, rather than this screen keeping a second slider that could drift from
+  // what the strip shows.
   useEffect(() => {
     if (mySeatIndex === -1) return;
     setSeatColor(room, identity.hue);
@@ -86,13 +88,11 @@ export function WaitingRoom({ room, isHost, identity, onReady }: Props) {
     && (room.state.mode !== 'teams' || (filledSeats >= 4 && filledSeats % 2 === 0));
   const modeLabel = room.state.mode === 'teams' ? 'Partners' : 'Free for all';
   const reason = startReason(room.state.mode, filledSeats);
-  // One persistent live region for everything ambient here (room creation, seats filling,
-  // Start becoming available) - same convention as GameBoard's lastMoveAnnouncement
-  // paragraph, rather than marking individually mounting/unmounting elements as live
-  // (unreliable across screen readers when the region itself appears at the same time as
-  // its content). This only re-announces on a real room.onStateChange event (a join/leave/
-  // start), never on an unrelated local render, so folding the Start-eligibility reason in
-  // here doesn't turn it into per-tick spam.
+  // One persistent live region for everything ambient here (room creation, seats filling, Start
+  // becoming available), rather than marking individually mounting elements as live - which is
+  // unreliable across screen readers when the region appears at the same time as its content.
+  // This only re-announces on a real room.onStateChange, never on an unrelated local render, so
+  // folding the Start-eligibility reason in doesn't turn it into per-tick spam.
   const announcement = isHost
     ? `Room created. Code ${room.state.code}. ${reason}`
     : `${filledSeats} players connected.`;
@@ -103,7 +103,7 @@ export function WaitingRoom({ room, isHost, identity, onReady }: Props) {
         setCopyError('');
         setCopyStatus('Copied');
         if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current);
-        copyTimeoutRef.current = window.setTimeout(() => setCopyStatus(''), 2500);
+        copyTimeoutRef.current = window.setTimeout(() => setCopyStatus(''), COPY_FEEDBACK_MS);
       })
       .catch(() => {
         setCopyStatus('');
@@ -120,11 +120,10 @@ export function WaitingRoom({ room, isHost, identity, onReady }: Props) {
           <button type="button" className="cp-button lobby__code-copy" onClick={handleCopyCode}>
             Copy
           </button>
-          {/* Visible confirmation for sighted users - aria-hidden since the role="status"
-              paragraph right below already covers screen readers. Kept as a separate element
-              rather than swapping the button's own label/text: a name change on an
-              already-focused control isn't reliably re-announced (see the a11y review this
-              file's history references), so the button's accessible name never changes. */}
+          {/* Visible confirmation for sighted users, aria-hidden because the role="status"
+              paragraph below already covers screen readers. A separate element rather than
+              swapping the button's own label: a name change on an already-focused control isn't
+              reliably re-announced, so the button's accessible name never changes. */}
           <span className={`lobby__copy-feedback${copyStatus ? ' lobby__copy-feedback--shown' : ''}`} aria-hidden="true">
             Copied
           </span>
@@ -149,6 +148,9 @@ export function WaitingRoom({ room, isHost, identity, onReady }: Props) {
       {isHost ? (
         <>
           <p id="start-reason" className="lobby__hint">{reason}</p>
+          {/* aria-disabled rather than the native attribute, so this stays focusable while its
+              disabled-ness flips on its own as players join - see .cp-button[aria-disabled] in
+              theme.css. The guard in onClick is what actually blocks an early start. */}
           <button
             type="button"
             className="cp-button lobby__start"

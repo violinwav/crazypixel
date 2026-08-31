@@ -1,3 +1,21 @@
+// The one and only room type. Server-authoritative: every client message is re-derived
+// against the shared engine before it is accepted, so a stale, buggy or malicious client
+// can't desync the game or move out of turn.
+//
+// Room state is deliberately thin - the real GameState is synced as one JSON string rather
+// than mirrored field by field into Schema classes, so the engine's shape can keep evolving
+// without a matching schema change here. See
+// docs/superpowers/specs/2026-08-22-online-multiplayer-lobbies-design.md.
+//
+// Not implemented: reconnect (a dropped seat freezes and plays on the turn clock),
+// spectators, and any persistence (rooms are in-memory and gone when empty).
+//
+// The @type decorators below need BOTH experimentalDecorators AND
+// useDefineForClassFields: false in tsconfig.json. Missing the second one fails silently:
+// decorators still apply and onStateChange still fires, but every field with a class-field
+// default decodes as undefined on every client, forever, because native class-field init
+// overwrites the property descriptor the decorator installed.
+
 import { Room, Client } from 'colyseus';
 import type { Delayed } from 'colyseus';
 import { Schema, type, ArraySchema } from '@colyseus/schema';
@@ -7,70 +25,81 @@ import {
 import type { Card, GameConfig, GameMode, GameState, Move, PlayerId } from '@crazypixel/shared';
 
 const TURN_MS = 20_000;
-// The shared engine's board layout is generic to any player count (see boardLayout.ts's
-// computeBoardGeometry - plain division/trig, no per-count branching), so an online lobby
-// doesn't need to fix a target headcount up front the way local hotseat does: it just
-// accepts joins up to this cap and starts with however many are actually seated.
+// The engine and the board layout are generic to any player count, so an online lobby needn't
+// fix a headcount up front the way local hotseat does: it accepts joins up to this cap and
+// starts with however many are seated.
 const MAX_PLAYERS = 6;
 const MIN_PLAYERS = 2;
-// Minimum gap between two emotes from the same seat. Emotes are the one thing in this game a
-// player can fire off out of turn and as often as they like, so this is what stops one seat
-// from burying everyone else's feed (which only shows the last few, see EmoteFeed.tsx) under
-// a held-down button. Over-quota sends are dropped silently rather than answered with an
-// error - the sender's own client already greys the picker out for the same window (see
-// EMOTE_COOLDOWN_MS there), so a rejection would only ever be reaching a client that's
-// deliberately ignoring it.
+// Minimum gap between two emotes from one seat. Emotes are the only thing a player can fire
+// off out of turn and as often as they like, so this stops one seat burying everyone else's
+// feed under a held-down button. Over-quota sends are dropped silently: the sender's client
+// greys its own picker for the same window, so a rejection would only ever reach a client
+// that is deliberately ignoring it.
 const EMOTE_COOLDOWN_MS = 1200;
 
 function isValidHue(hue: unknown): hue is number {
   return typeof hue === 'number' && Number.isInteger(hue) && hue >= 0 && hue < 360;
 }
 
-/** Pierces the wildAs/copyLastCard wrappers down to a forceDraw, mirroring the client's own
- * unwrapForceDraw (StealCardOverlay.tsx) - a steal can arrive as a bare 2, an 8 copying one,
- * or a Joker played as one, and autoPlayTurn below has to recognise all three. */
+/**
+ * Pierces the wildAs/copyLastCard wrappers down to a forceDraw, mirroring the client's own
+ * unwrapForceDraw - a steal can arrive as a bare 2, an 8 copying one, or a Joker played as
+ * one, and autoPlayTurn has to recognise all three.
+ */
 function forceDrawOf(move: Move): Extract<Move, { kind: 'forceDraw' }> | null {
   if (move.kind === 'forceDraw') return move;
   if (move.kind === 'wildAs' || move.kind === 'copyLastCard') return forceDrawOf(move.innerMove);
   return null;
 }
 
-/**
- * Networked room state kept deliberately thin - the actual GameState (marbles/hands/piles/
- * etc.) is synced as one JSON string, not mirrored field-by-field into Schema classes. See
- * docs/superpowers/specs/2026-08-22-online-multiplayer-lobbies-design.md for why: the shared
- * engine's GameState shape can keep evolving without this room needing a matching schema
- * change every time, at the cost of whole-state (not delta) sync per move.
- */
+// In-process registry of codes currently in use, so two simultaneously open rooms can't
+// collide. Reserved in onCreate, released in onDispose. Deliberately not a shared store -
+// fine for the single server process this project runs.
+const activeCodes = new Set<string>();
+
+function generateCode(): string {
+  let code: string;
+  do {
+    code = String(Math.floor(1000 + Math.random() * 9000));
+  } while (activeCodes.has(code));
+  activeCodes.add(code);
+  return code;
+}
+
 class RoomState extends Schema {
   @type('string') phase: 'waiting' | 'playing' = 'waiting';
   @type('string') mode: GameMode = 'ffa';
   @type(['number']) colors = new ArraySchema<number>();
   @type(['string']) seatSessionIds = new ArraySchema<string>();
   @type(['string']) playerNames = new ArraySchema<string>();
-  /** The short code players actually share to join (see generateCode below) - room.id
-   * itself is still colyseus's own long internal id, never shown to a player. */
+  /** The short code players share to join. room.id is colyseus's own long internal id and is
+   * never shown to a player. */
   @type('string') code = '';
   @type('string') stateJson = '';
-  /** The `Move` that produced the current stateJson, as JSON ('' for a pass, a fresh deal,
-   * or before the first move). Purely for animation: clients only ever see before/after
-   * GameState snapshots, which is enough to place a marble but not to know *how* it got
-   * there, so without this every remote move reads as a piece teleporting to its
-   * destination (see useOnlineGameState's planTurn call). Deliberately a Schema field
-   * rather than a broadcast message - it changes in the same patch as stateJson, so a
-   * client can never decode a move against the wrong snapshot, which is exactly the
-   * ordering guarantee a broadcast racing the state patch can't give (same reasoning the
-   * steal intent uses to go the *other* way - see handleStealIntent). Leaks nothing
-   * hidden: a move's card is on the discard pile a frame later anyway. */
+  /**
+   * The `Move` that produced the current stateJson, as JSON ('' for a pass, a fresh deal, or
+   * before the first move). Purely for animation: clients only see before/after snapshots,
+   * which place a marble but say nothing about how it got there, so without this every remote
+   * move reads as a teleport. A Schema field rather than a broadcast precisely because it
+   * changes in the same patch as stateJson, so a client can never decode a move against the
+   * wrong snapshot - the ordering guarantee a broadcast racing a state patch can't give.
+   * Leaks nothing hidden: the move's card is on the discard pile a frame later anyway.
+   */
   @type('string') lastMoveJson = '';
-  /** Epoch ms when the current turn auto-plays if nobody acts - see scheduleTurnTimeout.
-   * 0 before the game starts. Purely informational for clients (TurnTimerBar.tsx); the
-   * server-side clock.setTimeout below is what actually enforces it. */
+  /**
+   * Epoch ms when the current turn auto-plays, 0 before the game starts. Informational for
+   * clients (TurnTimerBar.tsx); the server-side clock is what enforces it.
+   */
   @type('number') turnDeadline = 0;
 }
 
 interface CreateOptions {
   mode: GameMode;
+  hue: number;
+}
+
+interface JoinOptions {
+  displayName: string;
   hue: number;
 }
 
@@ -84,9 +113,11 @@ interface SetColorMessage {
 
 interface StealIntentMessage {
   targetPlayer: PlayerId;
-  /** The card being spent on the steal - broadcast so every client can lay it on the discard
-   * pile immediately (see GameBoard's pendingLaidCard), and kept server-side so a timeout
-   * finishes the steal the player already committed to. */
+  /**
+   * The card being spent on the steal. Broadcast so every client can lay it on the discard
+   * pile immediately, and kept server-side so a timeout can finish the steal the player
+   * already committed to.
+   */
   card: Card;
 }
 
@@ -95,70 +126,47 @@ interface EmoteMessage {
   emoteId: string;
 }
 
-interface JoinOptions {
-  displayName: string;
-  hue: number;
-}
-
-// In-process registry of codes currently in use, so two simultaneously-open rooms can't
-// collide - reserved in onCreate, released in onDispose. Deliberately not a persistent/
-// shared store (matches this project's existing "no separate matchmaking registry"
-// simplicity - see the class doc below): fine for one server process, which is all this
-// project runs.
-const activeCodes = new Set<string>();
-
-function generateCode(): string {
-  let code: string;
-  do {
-    code = String(Math.floor(1000 + Math.random() * 9000));
-  } while (activeCodes.has(code));
-  activeCodes.add(code);
-  return code;
-}
-
 /**
- * Server-authoritative game room: re-derives legal moves via the shared engine before
- * accepting anything a client sends, so a stale/buggy/malicious client can't desync the
- * game or move out of turn. `state.code` (see generateCode above) is the short code players
- * share to join - matched server-side via filterBy(['code']), see index.ts - not
- * `room.id`, colyseus's own long internal id, which is never shown to a player.
+ * A game room.
  *
- * The game doesn't auto-start the instant every seat fills - seat 0 (the host) has to send
- * 'startGame' (see handleStartGame), same as the local hotseat lobby's own explicit Start
- * Game button. Gives every joining player a moment to actually look at and adjust their own
- * color before play begins, instead of it starting under them mid-pick.
- *
- * Every turn gets a 20s clock (TURN_MS) - see scheduleTurnTimeout/autoPlayTurn. This also
- * means a mid-game disconnect (see onLeave) doesn't stall the game forever: the frozen
- * seat's turn still times out and auto-plays like anyone else's.
+ * The game doesn't auto-start when seats fill: seat 0 (the host) has to send 'startGame',
+ * which gives every joining player a moment to look at and adjust their color instead of
+ * play beginning under them mid-pick. Every turn then gets a TURN_MS clock, which also means
+ * a mid-game disconnect can't stall the game forever - the frozen seat's turn times out and
+ * auto-plays like anyone else's.
  */
 export class GameRoom extends Room<RoomState> {
   private gameState: GameState | null = null;
   private turnTimeout: Delayed | null = null;
-  /** Set once the current player commits to stealing from someone (see handleStealIntent).
-   * Picking a target is final - the client offers no way back - so this is what makes the
-   * turn clock honour that decision instead of auto-playing something else entirely. Cleared
-   * on every commitTurn, so it can never outlive the turn that set it. */
+  /**
+   * Set once the current player commits to stealing from someone. Picking a target is final -
+   * the client offers no way back - so this is what makes the turn clock honour that decision
+   * instead of auto-playing something else. Cleared on every commitTurn, so it can never
+   * outlive the turn that set it.
+   */
   private pendingSteal: { seat: PlayerId; targetPlayer: PlayerId; cardId: string } | null = null;
-  /** Last emote send time per seat, for EMOTE_COOLDOWN_MS above. Plain array indexed by seat
-   * rather than a Map keyed by sessionId - a seat outlives any one client object, and the
-   * cooldown should follow the seat. */
+  /**
+   * Last emote time per seat, for EMOTE_COOLDOWN_MS. Indexed by seat rather than keyed by
+   * sessionId: a seat outlives any one client object, and the cooldown follows the seat.
+   */
   private lastEmoteAt: number[] = [];
-  /** Monotonic per-room counter that gives every broadcast emote a unique id. Generated
-   * server-side, not per-client, so every client keys the same message the same way and two
-   * identical emotes sent back to back are still two distinct entries in the feed rather
-   * than one React element that never re-animates. */
+  /**
+   * Monotonic per-room counter giving every broadcast emote a unique id. Generated
+   * server-side so every client keys the same message the same way and two identical emotes
+   * back to back stay two distinct feed entries.
+   */
   private emoteSeq = 0;
+
+  // --- Lifecycle ----------------------------------------------------------
 
   async onCreate(options: CreateOptions) {
     this.maxClients = MAX_PLAYERS;
     this.setState(new RoomState());
     this.state.mode = options.mode;
     this.state.code = generateCode();
-    // A *top-level* field on the room listing, not this.setMetadata() (which nests under
-    // listing.metadata) - filterBy(['code'])'s join-side matching (index.ts) compares
-    // options.code against room.listing.code directly, the same top-level pattern
-    // setPrivate() uses for `listing.private` elsewhere in colyseus's own Room class. Nested
+    // A *top-level* listing field, not setMetadata() (which nests under listing.metadata):
+    // filterBy(['code'])'s join-side matching compares options.code against listing.code
+    // directly, the same top-level pattern setPrivate() uses for listing.private. Nested
     // metadata wouldn't be found by that match at all.
     this.listing.code = this.state.code;
     await this.listing.save();
@@ -172,13 +180,12 @@ export class GameRoom extends Room<RoomState> {
     this.onMessage('emote', (client, message: EmoteMessage) => this.handleEmote(client, message));
   }
 
-  /** Rejects a join once the game's started - not redundant with maxClients/lock() below.
-   * The old fixed-playerCount design got this for free (maxClients always equalled the
-   * exact seat target, so a full lobby was already unjoinable by the time Start could even
-   * fire); this one's maxClients is a constant cap that's often still short of MAX_PLAYERS
-   * when Start fires (Start only needs MIN_PLAYERS), leaving real open slots a late joiner
-   * could otherwise land in after the engine's already been initialized for a smaller
-   * config.playerCount than their seat index would need. */
+  /**
+   * Rejects a join once the game has started. Not redundant with maxClients/lock(): maxClients
+   * is a constant cap that is often still short of MAX_PLAYERS when Start fires (Start only
+   * needs MIN_PLAYERS), leaving real open slots a late joiner could otherwise land in after
+   * the engine was initialized for a smaller config.playerCount than their seat index needs.
+   */
   onAuth(): boolean {
     return this.state.phase === 'waiting';
   }
@@ -187,25 +194,21 @@ export class GameRoom extends Room<RoomState> {
     const seatIndex = this.state.seatSessionIds.length;
     this.state.seatSessionIds.push(client.sessionId);
     this.state.playerNames.push(options.displayName?.trim() || `Player ${seatIndex + 1}`);
-    // Every seat's color is just whatever that player's own profile picked (network.ts
-    // sends `hue` from PlayerIdentity for both create and join) - a stale/buggy client
-    // omitting or mangling it just falls back to 0 rather than crashing the room.
+    // Color comes straight from the player's own profile. A stale or buggy client omitting
+    // or mangling it falls back to 0 rather than crashing the room.
     this.state.colors.push(isValidHue(options.hue) ? options.hue : 0);
   }
 
   onLeave(client: Client) {
-    // Mid-game disconnects intentionally freeze the seat rather than reopening it or
-    // supporting reconnect - out of scope for this pass (see design doc). Only a seat that
-    // never made it into a started game gets removed, so a later joiner can take it.
+    // A mid-game disconnect intentionally freezes the seat rather than reopening it. Only a
+    // seat that never made it into a started game is removed, so a later joiner can take it.
     if (this.state.phase !== 'waiting') return;
     const index = this.state.seatSessionIds.indexOf(client.sessionId);
     if (index !== -1) {
       this.state.seatSessionIds.splice(index, 1);
       this.state.playerNames.splice(index, 1);
-      // colors now grows one push per onJoin (seat count isn't fixed upfront anymore), so
-      // it has to stay index-aligned with the two arrays above on the way out too - unlike
-      // the old fixed-length-from-creation version, a stale/misaligned entry here would hand
-      // the next joiner someone else's color.
+      // colors grows one push per onJoin, so it has to stay index-aligned with the two arrays
+      // above on the way out too, or the next joiner gets someone else's color.
       this.state.colors.splice(index, 1);
     }
   }
@@ -214,15 +217,18 @@ export class GameRoom extends Room<RoomState> {
     activeCodes.delete(this.state.code);
   }
 
+  // --- Turn commit and clock ----------------------------------------------
+
   private seatFor(client: Client): PlayerId | null {
     const index = this.state.seatSessionIds.indexOf(client.sessionId);
     return index === -1 ? null : (index as PlayerId);
   }
 
-  /** Clones the current state, lets `mutate` apply one turn's effect, advances to the next
-   * player, commits it as the new authoritative state, and re-arms the turn clock -
-   * shared by a real player's move/pass and the auto-play fallback so all three stay in
-   * sync about what "committing a turn" means. */
+  /**
+   * Clones the state, lets `mutate` apply one turn's effect, advances the turn, commits the
+   * result as authoritative and re-arms the clock. Shared by a real move, a pass and the
+   * auto-play fallback, so all three agree on what committing a turn means.
+   */
   private commitTurn(mutate: (next: GameState) => void, move: Move | null = null) {
     const state = this.gameState;
     if (!state) return;
@@ -232,15 +238,13 @@ export class GameRoom extends Room<RoomState> {
     this.pendingSteal = null;
     this.gameState = next;
     this.state.stateJson = JSON.stringify(next);
-    // Set alongside stateJson (same patch) so clients decode the move against the snapshot
-    // it actually applied to - see RoomState.lastMoveJson.
+    // Same patch as stateJson, so clients decode the move against the snapshot it applied to.
     this.state.lastMoveJson = move ? JSON.stringify(move) : '';
-    // A finished game gets no new clock. Without this the 20s timer stayed armed after the
-    // winning move and autoPlayTurn kept committing real moves on an ended game every 20s
-    // forever (confirmed by driving the engine directly: winners/phase stick, since
-    // checkWinner early-returns once winners is set, but marbles kept walking, hands kept
-    // draining and rounds kept re-dealing behind the win screen). turnDeadline back to 0 so
-    // TurnTimerBar stops rendering a countdown for a turn that can no longer time out.
+    // A finished game gets no new clock. Without this the timer stayed armed after the
+    // winning move and autoPlayTurn kept committing real moves every 20s forever - winners
+    // and phase stick, but marbles kept walking and rounds kept re-dealing behind the win
+    // screen. turnDeadline goes back to 0 so TurnTimerBar stops counting down a turn that can
+    // no longer time out.
     if (next.phase === 'gameEnd') {
       this.turnTimeout?.clear();
       this.turnTimeout = null;
@@ -256,16 +260,16 @@ export class GameRoom extends Room<RoomState> {
     this.turnTimeout = this.clock.setTimeout(() => this.autoPlayTurn(), TURN_MS);
   }
 
-  /** 20s elapsed with no move from the current player - play the first card in their hand
-   * that has any legal move (hand order, not sorted), picking randomly among that card's
-   * own legal moves ("random marble"), or pass if nothing in hand is playable. Also what
-   * quietly keeps a game moving when the current seat belongs to a disconnected client.
+  /**
+   * The turn clock expired. Plays the first card in hand order that has any legal move,
+   * picking randomly among that card's own moves, or passes if nothing is playable. Also what
+   * keeps a game moving when the current seat belongs to a disconnected client.
    *
-   * A committed steal (pendingSteal) overrides all of that: the player already chose the
-   * card AND whose hand it reaches into, and only the blind position was left open, so the
-   * clock finishes exactly that steal at a random position rather than throwing the decision
-   * away and playing some unrelated card. Falls through to the ordinary path if that steal
-   * somehow isn't legal any more, so a stale intent can never wedge a turn. */
+   * A committed steal overrides all of that: the player already chose the card AND whose hand
+   * it reaches into, and only the blind position was left open, so the clock finishes exactly
+   * that steal at a random position rather than throwing the decision away. Falls through to
+   * the ordinary path if that steal isn't legal any more, so a stale intent can't wedge a turn.
+   */
   private autoPlayTurn() {
     const state = this.gameState;
     if (!state || this.state.phase !== 'playing') return;
@@ -296,68 +300,7 @@ export class GameRoom extends Room<RoomState> {
     }, chosen);
   }
 
-  /** Purely cosmetic side-channel: "the player whose turn it is has picked whose hand to
-   * reach into, but hasn't committed to a card yet." Broadcast so the *target* can be warned
-   * before it happens (see GameBoard.tsx's steal alert) - the pick itself is local UI state
-   * on the thief's client (BoardOverlay's figure-select step), so without this nobody else
-   * would ever hear about it.
-   *
-   * Deliberately NOT part of RoomState/stateJson: that's committed game state, and a
-   * transient "I'm hovering over you" flag living there would show up in every client's
-   * before/after diff (the exact input planCaptures and GameBoard's steal detection run on)
-   * as a state change with no move behind it. Broadcast messages are the right shape for
-   * something with no persistence at all. There's no matching "clear" broadcast either -
-   * clients drop the intent on their own the moment any new stateJson arrives (the turn
-   * moved on), which is race-free in a way a second broadcast racing the state patch isn't.
-   *
-   * Validated as far as "it's your turn, that's a real other seat, and you actually hold
-   * that card" - deliberately not re-deriving whether a forceDraw against that target is
-   * legal, which would mean a full getLegalMoves sweep of the sender's whole hand (7-splits
-   * included) on every tap. The card check is what matters for the two real effects here:
-   * every client lays that card on the discard pile on the strength of this message, and
-   * autoPlayTurn will try to finish the steal with it. handlePlay still re-derives full
-   * legality when the move itself lands, so nothing here can produce an illegal play.
-   *
-   * There's no retract - once a target is picked the decision is final by design, and
-   * accepting a "never mind" would also hand a client a way to dodge the timeout steal
-   * autoPlayTurn is holding it to. pendingSteal is only ever cleared by commitTurn. */
-  private handleStealIntent(client: Client, { targetPlayer, card }: StealIntentMessage) {
-    const state = this.gameState;
-    if (!state || this.state.phase !== 'playing') return;
-    const seat = this.seatFor(client);
-    if (seat === null || seat !== state.currentPlayer) return;
-    const isRealOpponent = Number.isInteger(targetPlayer)
-      && targetPlayer >= 0 && targetPlayer < state.config.playerCount && targetPlayer !== seat;
-    if (!isRealOpponent) return;
-    if (!card || !state.hands[seat].some((c) => c.id === card.id)) return;
-
-    this.pendingSteal = { seat, targetPlayer, cardId: card.id };
-    this.broadcast('stealIntent', { by: seat, target: targetPlayer, card });
-  }
-
-  /** Emotes are chat, not game state: any seated player can send one at any time, including
-   * on someone else's turn and after the game has ended - being unable to react to the move
-   * that just beat you would miss the entire point. Broadcast-only for the same reason the
-   * steal intent is (see handleStealIntent): they have no persistence, so they have no
-   * business in stateJson, where they'd show up in every client's before/after diff as a
-   * state change with no move behind it.
-   *
-   * The wire carries an id from the shared EMOTES catalogue, never the glyphs - a client
-   * that makes up an id is dropped here, which is what keeps this from being an
-   * arbitrary-text channel onto five other people's screens. */
-  private handleEmote(client: Client, { emoteId }: EmoteMessage) {
-    if (this.state.phase !== 'playing') return;
-    const seat = this.seatFor(client);
-    if (seat === null) return;
-    if (typeof emoteId !== 'string' || !emoteById(emoteId)) return;
-
-    const now = Date.now();
-    if (now - (this.lastEmoteAt[seat] ?? 0) < EMOTE_COOLDOWN_MS) return;
-    this.lastEmoteAt[seat] = now;
-
-    this.emoteSeq += 1;
-    this.broadcast('emote', { id: this.emoteSeq, by: seat, emoteId });
-  }
+  // --- Message handlers ---------------------------------------------------
 
   private handlePlay(client: Client, { move }: PlayMessage) {
     const state = this.gameState;
@@ -384,11 +327,69 @@ export class GameRoom extends Room<RoomState> {
     this.commitTurn((next) => passHand(next, seat));
   }
 
-  /** Only legal pre-game (colors are fixed once play starts, matching how config/mode also
-   * can't change mid-game). No uniqueness check - two seats landing on the same or a nearby
-   * hue is the players' own choice now that color is continuous, not a fixed 6-entry
-   * palette. Fired by WaitingRoom.tsx's sync effect whenever the player's profile color
-   * changes while they're seated here. */
+  /**
+   * "The player whose turn it is has picked whose hand to reach into, but hasn't committed to
+   * a card yet." Purely cosmetic, and broadcast so the *target* can be warned - the pick is
+   * local UI state on the thief's client, so without this nobody else would hear about it.
+   *
+   * Deliberately NOT part of stateJson: that is committed game state, and a transient
+   * "I'm hovering over you" flag there would show up in every client's before/after diff as a
+   * change with no move behind it. There is no matching "clear" broadcast either - clients
+   * drop the intent when any new stateJson arrives, which is race-free in a way a second
+   * broadcast racing the state patch is not.
+   *
+   * Validated only as far as "it's your turn, that's a real other seat, and you hold that
+   * card". Deliberately not re-deriving whether a forceDraw against that target is legal,
+   * which would mean a full getLegalMoves sweep of the sender's hand (7-splits included) on
+   * every tap. The card check is what matters for the two real effects: every client lays
+   * that card on the pile on the strength of this, and autoPlayTurn will try to finish the
+   * steal with it. handlePlay still re-derives full legality when the move lands.
+   *
+   * There is no retract. The decision is final by design, and accepting a "never mind" would
+   * hand a client a way to dodge the timeout steal autoPlayTurn is holding it to.
+   */
+  private handleStealIntent(client: Client, { targetPlayer, card }: StealIntentMessage) {
+    const state = this.gameState;
+    if (!state || this.state.phase !== 'playing') return;
+    const seat = this.seatFor(client);
+    if (seat === null || seat !== state.currentPlayer) return;
+    const isRealOpponent = Number.isInteger(targetPlayer)
+      && targetPlayer >= 0 && targetPlayer < state.config.playerCount && targetPlayer !== seat;
+    if (!isRealOpponent) return;
+    if (!card || !state.hands[seat].some((c) => c.id === card.id)) return;
+
+    this.pendingSteal = { seat, targetPlayer, cardId: card.id };
+    this.broadcast('stealIntent', { by: seat, target: targetPlayer, card });
+  }
+
+  /**
+   * Emotes are chat, not game state: any seated player can send one at any time, including on
+   * someone else's turn - being unable to react to the move that just beat you would miss the
+   * point. Broadcast-only for the same reason the steal intent is: no persistence means no
+   * business in stateJson.
+   *
+   * The wire carries a catalogue id, never glyphs, and a made-up id is dropped here - which is
+   * what keeps this from being an arbitrary-text channel onto five other people's screens.
+   */
+  private handleEmote(client: Client, { emoteId }: EmoteMessage) {
+    if (this.state.phase !== 'playing') return;
+    const seat = this.seatFor(client);
+    if (seat === null) return;
+    if (typeof emoteId !== 'string' || !emoteById(emoteId)) return;
+
+    const now = Date.now();
+    if (now - (this.lastEmoteAt[seat] ?? 0) < EMOTE_COOLDOWN_MS) return;
+    this.lastEmoteAt[seat] = now;
+
+    this.emoteSeq += 1;
+    this.broadcast('emote', { id: this.emoteSeq, by: seat, emoteId });
+  }
+
+  /**
+   * Only legal pre-game - colors are fixed once play starts, matching config and mode. No
+   * uniqueness check: two seats landing on the same or a nearby hue is the players' own
+   * choice now that color is continuous rather than a fixed palette.
+   */
   private handleSetColor(client: Client, { hue }: SetColorMessage) {
     if (this.state.phase !== 'waiting') return;
     if (!isValidHue(hue)) return;
@@ -398,12 +399,11 @@ export class GameRoom extends Room<RoomState> {
     this.state.colors[seat] = hue;
   }
 
-  /** Only seat 0 (the host) can start. No fixed target to wait for anymore - just a floor
-   * (MIN_PLAYERS) and, for Partners, the same even-count-of-4-or-6 requirement the local
-   * hotseat lobby enforces (PlayerSetupPicker.tsx's teamsAvailable) - re-derived
-   * server-side rather than trusted from the client, same reasoning as every other message
-   * here (handlePlay etc.): a stale/buggy client's Start Game button being enabled doesn't
-   * mean the server has to believe it. */
+  /**
+   * Host-only (seat 0). No fixed target headcount, just a floor and - for Partners - the same
+   * even-count-of-4-or-6 rule the local lobby enforces, re-derived here rather than trusted
+   * from the client: a stale client's Start button being enabled doesn't oblige the server.
+   */
   private handleStartGame(client: Client) {
     if (this.state.phase !== 'waiting') return;
     if (this.seatFor(client) !== 0) return;
@@ -419,32 +419,31 @@ export class GameRoom extends Room<RoomState> {
     this.state.stateJson = JSON.stringify(state);
     this.state.lastMoveJson = '';
     this.scheduleTurnTimeout();
-    // Belt-and-suspenders alongside onAuth's phase check above - takes this room out of
-    // matchmaking's room-listing results too, not just out of reach for a client that
-    // already has the code.
+    // Belt and braces alongside onAuth's phase check: also takes this room out of
+    // matchmaking's listing results, not just out of reach for a client holding the code.
     void this.lock();
   }
 
-  /** Deals a brand-new game to the same seats after one finishes. Host-only, matching
-   * handleStartGame - one player decides for the table rather than a majority vote or a
-   * first-click-wins race between six win screens.
+  /**
+   * Deals a brand-new game to the same seats after one finishes. Host-only, matching
+   * handleStartGame - one player decides for the table rather than a first-click-wins race
+   * between six win screens.
    *
-   * Reuses the finished game's own `config` rather than rebuilding one from the current
-   * seat count: seats can't change once a game is playing (onAuth rejects late joins,
-   * onLeave leaves a started game's seats alone), so the two agree today, but reading it
-   * off the state that just ended is what keeps them agreeing if that ever stops being
-   * true - a config with a different playerCount than the seats clients are already
-   * rendering would desync every board at once.
+   * Reuses the finished game's own config rather than rebuilding one from the seat count.
+   * The two agree today (seats can't change once a game is playing), and reading it off the
+   * state that just ended is what keeps them agreeing if that stops being true - a config
+   * with a different playerCount than the seats clients are rendering would desync every
+   * board at once.
    *
-   * Seats, colors and names all deliberately carry over untouched - the room's whole
-   * identity is "these people at these seats," and a rematch is another game between them,
-   * not a new lobby. That includes any seat whose client dropped mid-game (still frozen,
-   * see onLeave); it plays the rematch on the turn clock's auto-play like it did before. */
+   * Seats, colors and names carry over untouched: the room's identity is "these people at
+   * these seats", and a rematch is another game between them, not a new lobby. That includes
+   * a seat whose client dropped mid-game - it plays the rematch on the turn clock as before.
+   */
   private handleRematch(client: Client) {
     if (this.state.phase !== 'playing') return;
-    // The finished-ness is the real gate, not the room phase - room phase stays 'playing'
-    // for a room's whole life once started, so without this any seat-0 client could reroll
-    // a game that's still in progress out from under everyone.
+    // Finished-ness is the real gate, not room phase: room phase stays 'playing' for a room's
+    // whole life once started, so without this any seat-0 client could reroll a game that is
+    // still in progress out from under everyone.
     if (this.gameState?.phase !== 'gameEnd') return;
     if (this.seatFor(client) !== 0) return;
 

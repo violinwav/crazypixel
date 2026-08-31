@@ -1,16 +1,23 @@
 import { useEffect, useState } from 'react';
 import { playerLabel } from './game/playerName';
 
+// Half of the crossfade: hold the old name out for this long, then swap and fade the new one
+// in. Matches .turn-label's own opacity transition in theme.css.
+const SWAP_MS = 220;
+
 interface Props {
   player: number;
   playerNames?: string[];
 }
 
-/** Small label sitting right above the hand panel, not anchored to the board/stack anymore
- * (that crowded the ring's own kennel markers). Crossfades on every turn change instead of
- * snapping - fade out the old player, swap, fade in the new one - same "flip a flag after a
- * tick" timing technique as FlyingCard/DealAnimation (requestAnimationFrame is unreliable in
- * this environment). */
+/**
+ * Whose turn it is, sitting just above the hand panel. Crossfades on a turn change instead of
+ * snapping - fade the old player out, swap, fade the new one in - using the same "flip a flag
+ * after a tick" technique as the card flights, since requestAnimationFrame is unreliable in a
+ * backgrounded tab (see PhaserGame.ts).
+ *
+ * aria-hidden: GameBoard's aria-live region already announces the turn.
+ */
 export function TurnLabel({ player, playerNames }: Props) {
   const [displayPlayer, setDisplayPlayer] = useState(player);
   const [visible, setVisible] = useState(true);
@@ -21,7 +28,7 @@ export function TurnLabel({ player, playerNames }: Props) {
     const timer = setTimeout(() => {
       setDisplayPlayer(player);
       setVisible(true);
-    }, 220);
+    }, SWAP_MS);
     return () => clearTimeout(timer);
   }, [player, displayPlayer]);
 

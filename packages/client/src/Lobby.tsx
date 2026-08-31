@@ -1,3 +1,9 @@
+// The whole pregame flow: a persistent identity strip above whichever screen is active.
+//
+// Join-by-code and Host live on the same top-level menu screen, with no separate "choose online
+// mode" detour, and Host only ever asks for a mode - the room adapts to however many people
+// actually join. Singleplayer is the one place that still picks a fixed player count up front.
+
 import { useEffect, useId, useRef, useState } from 'react';
 import type { Room } from 'colyseus.js';
 import type { GameMode } from '@crazypixel/shared';
@@ -10,6 +16,8 @@ import type { RoomState, OnlineSession } from './game/network';
 import type { PlayerIdentity as Identity } from './game/playerIdentity';
 
 export type { PlayerSetup as GameSetup } from './PlayerSetupPicker';
+
+const JOIN_CODE_LENGTH = 4;
 
 interface Props {
   identity: Identity;
@@ -25,12 +33,6 @@ type Screen =
   | { kind: 'connecting' }
   | { kind: 'waiting'; room: Room<RoomState>; isHost: boolean };
 
-/** The whole pregame flow: a persistent identity strip (name/color/marble, see
- * PlayerIdentity.tsx) above whichever screen is active. Multiplayer's join-by-code and Host
- * live on the same top-level menu screen (no separate "choose online mode" detour); Host
- * only ever asks for a Mode, never a player count - the room adapts to however many people
- * actually join (GameRoom.ts's MAX_PLAYERS/handleStartGame). Singleplayer is the one place
- * that still picks a fixed player count up front, via the unchanged PlayerSetupPicker. */
 export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Props) {
   const [screen, setScreen] = useState<Screen>({ kind: 'menu' });
   const [joinCode, setJoinCode] = useState('');
@@ -45,11 +47,10 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
   const joinCodeId = useId();
   const joinErrorId = useId();
 
-  // Moves focus to the new screen's own heading on every real transition (Back, Join,
-  // Host, a completed connect) - never on this component's own first mount, so loading the
-  // app doesn't yank focus away from the top of the page the browser already put it at.
-  // 'connecting' and 'waiting' manage their own focus locally instead of through this ref
-  // (see below and WaitingRoom.tsx) since they're single-purpose/short-lived screens.
+  // Moves focus to the new screen's own heading on every real transition (Back, Join, Host, a
+  // completed connect) - never on first mount, so loading the app doesn't yank focus away from
+  // the top of the page. 'connecting' and 'waiting' manage focus locally instead, being
+  // single-purpose and short-lived.
   const headingRef = useRef<HTMLHeadingElement>(null);
   const prevScreenKindRef = useRef(screen.kind);
   useEffect(() => {
@@ -64,7 +65,7 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
   }, [screen.kind]);
 
   const name = identity.name.trim();
-  const canJoin = name.length > 0 && joinCode.length === 4;
+  const canJoin = name.length > 0 && joinCode.length === JOIN_CODE_LENGTH;
   const canHost = name.length > 0;
 
   const handleJoin = () => {
@@ -97,6 +98,8 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
         <h2 className="lobby__heading visually-hidden" ref={headingRef} tabIndex={-1}>Play</h2>
         <section className="cp-panel lobby__section">
           <h3 className="lobby__heading">Multiplayer</h3>
+          {/* A <form> around the code field and its submit only - Host and Singleplayer aren't
+              part of "join a game" semantically and shouldn't share a group with it. */}
           <form
             className="lobby__join-row"
             onSubmit={(e) => {
@@ -111,13 +114,13 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                maxLength={4}
+                maxLength={JOIN_CODE_LENGTH}
                 className="lobby__code-input"
                 value={joinCode}
                 aria-describedby={joinError ? joinErrorId : undefined}
                 aria-invalid={joinError ? true : undefined}
                 onChange={(e) => {
-                  setJoinCode(e.target.value.replace(/\D/g, '').slice(0, 4));
+                  setJoinCode(e.target.value.replace(/\D/g, '').slice(0, JOIN_CODE_LENGTH));
                   setJoinError(null);
                 }}
               />
@@ -193,9 +196,8 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
     <main className="lobby">
       <h1 className="cp-title lobby__title">CRAZYPIXEL</h1>
       <PlayerIdentity identity={identity} onChange={onIdentityChange} />
-      {/* Keyed on screen.kind so React remounts this div (and only this div - the identity
-          strip above never does) on every real transition, replaying its CSS entrance
-          animation (.lobby__screen, theme.css) - a plain settle, not a slide-from-nowhere. */}
+      {/* Keyed on screen.kind so React remounts this div - and only this div, never the identity
+          strip above - on every real transition, replaying its CSS entrance animation. */}
       <div key={screen.kind} className="lobby__screen">{body}</div>
     </main>
   );

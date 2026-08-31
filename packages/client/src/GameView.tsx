@@ -1,3 +1,6 @@
+// Local hotseat game. Everyone shares one device, so the engine runs in-process
+// (useGameState) and the acting seat changes every turn.
+
 import { useGameState } from './game/useGameState';
 import { GameBoard } from './GameBoard';
 import type { BoardBackground } from './GameBoard';
@@ -18,11 +21,10 @@ export function GameView({ setup, onBackgroundChange }: Props) {
       restart={restart}
       lastPlanRef={lastPlanRef}
       mySeat={state.currentPlayer}
-      // Fixed, not state.currentPlayer - local hotseat's mySeat rotates every turn (it's
-      // always whoever's acting), but re-rotating the whole board to match read as
-      // disorienting rather than helpful (direct feedback) - seat 0 anchors the same visual
-      // orientation for the whole session instead. Online play doesn't pass this at all
-      // (GameBoard defaults viewerSeat to mySeat there, which is already fixed all session).
+      // Fixed, unlike mySeat: hotseat's acting seat rotates every turn, and re-rotating the
+      // whole board to match read as disorienting rather than helpful, so seat 0 anchors one
+      // orientation for the session. Online play omits this prop entirely (GameBoard defaults
+      // viewerSeat to mySeat, which is already fixed there).
       viewerSeat={0}
       colors={setup.colors}
       onBackgroundChange={onBackgroundChange}

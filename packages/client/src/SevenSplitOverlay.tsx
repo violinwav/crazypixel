@@ -1,9 +1,37 @@
+// The 7's multi-marble step allocator: tap a marble on the board to pick it, then a pixel
+// slider sets that marble's step count. The board shows the result of a selection too - the
+// walked path so far, as squares along the route.
+//
+// KNOWN GAP: the `--active` modifier below is applied but theme.css defines no rule for it, so
+// these dots render identically to BoardOverlay's inert path dots. The intended "pulse while
+// this marble is the one being adjusted" cue does not exist.
+//
+// Reaching 7 total does NOT auto-submit. A confirm button appears once the allocation exactly
+// matches a real legal move (already enumerated by the engine, see generateSevenSplits), so a
+// slider drag that happens to land on the target count doesn't commit the turn before the
+// player meant it to. The slider's own max keeps every drag inside the legal set.
+
 import { useEffect, useRef, useState } from 'react';
 import { captureIndicesFor, planMovement, trackLengthFor } from '@crazypixel/shared';
 import type { GameState, Marble, Move, PlayerId } from '@crazypixel/shared';
-import { trackPoint, homeSlotPoint } from './game/boardLayout';
+import { homeSlotPoint, trackPoint } from './game/boardLayout';
 import type { BoardGeometry, Point } from './game/boardLayout';
 import { PixelSlider } from './PixelSlider';
+
+const PATH_DOT_SIZE = 8;
+const TARGET_SIZE = 44;
+const SEVEN_TOTAL = 7;
+
+type SplitSevenMove = Extract<Move, { kind: 'splitSeven' }>;
+
+interface Props {
+  state: GameState;
+  /** Top-level legal moves for the selected card, already filtered to ones that are (or wrap,
+   * via wildAs for a Joker played as 7) a splitSeven. */
+  moves: Move[];
+  geo: BoardGeometry;
+  onPlay: (player: PlayerId, move: Move) => void;
+}
 
 function marblePoint(state: GameState, marble: Marble, trackLength: number, geo: BoardGeometry): Point | null {
   if (marble.location.zone === 'track') return trackPoint(marble.location.index, trackLength, geo);
@@ -17,13 +45,9 @@ function marbleLabel(marble: Marble): string {
     : `Marble on square ${marble.location.index}`;
 }
 
-const PATH_DOT_SIZE = 8;
-const TARGET_SIZE = 44;
-const SEVEN_TOTAL = 7;
-
-/** Spoken counterpart of the red path dots - the red highlight is the only visual sign that
- * this allocation burns marbles on the way through, so the marble's own label has to say the
- * same thing (WCAG 1.4.1). */
+/** Spoken counterpart of the red path dots: the red highlight is the only visual sign that an
+ * allocation burns marbles on the way through, so the marble's own label has to say the same
+ * thing (WCAG 1.4.1). */
 function captureLabelFor(state: GameState, marble: Marble, steps: number): string {
   if (steps <= 0) return '';
   const count = captureIndicesFor(state, marble, steps, 'passOver').length;
@@ -31,20 +55,9 @@ function captureLabelFor(state: GameState, marble: Marble, steps: number): strin
   return count === 1 ? ', sends a marble home' : `, sends ${count} marbles home`;
 }
 
-type SplitSevenMove = Extract<Move, { kind: 'splitSeven' }>;
-
-interface Props {
-  state: GameState;
-  /** Top-level legal moves for the selected card, already filtered to ones that are (or
-   * wrap, via wildAs for a Joker played as 7) a splitSeven - see unwrapSplitSeven. */
-  moves: Move[];
-  geo: BoardGeometry;
-  onPlay: (player: PlayerId, move: Move) => void;
-}
-
-/** Unwraps wildAs (Joker-as-7) down to the underlying splitSeven, so the allocator logic
- * below works the same regardless of whether the 7 was played directly or via a Joker. The
- * *outer* move (possibly still wildAs-wrapped) is what actually gets applied - see caller. */
+/** Unwraps wildAs/copyLastCard down to the underlying splitSeven, so the allocator works the
+ * same whether the 7 was played directly or via a Joker. The OUTER move - possibly still
+ * wrapped - is what actually gets applied. */
 function unwrapSplitSeven(move: Move): SplitSevenMove | null {
   if (move.kind === 'splitSeven') return move;
   if (move.kind === 'wildAs' || move.kind === 'copyLastCard') return unwrapSplitSeven(move.innerMove);
@@ -56,29 +69,22 @@ function matchesAllocation(alloc: Record<string, number>, steps: SplitSevenMove[
   return Object.entries(alloc).every(([marbleId, count]) => byMarble.get(marbleId) === count);
 }
 
-/** Is `alloc` still a possible prefix of this candidate - i.e. has no marble been tapped
- * more times than this candidate ultimately gives it? Deliberately looser than an exact
- * match: with only one eligible marble, the only legal candidate might be "this marble
- * takes all 7" - no candidate exists for the intermediate counts 1..6, so gating each tap
- * on an *exact* match (as this used to) rejected every tap before the count could ever
- * reach 7, softlocking the card. Prefix-viability accepts "still consistent with reaching
- * this candidate eventually," and the exact match is only required once total hits 7 (see
- * handleTap) - so it can't produce a final allocation that isn't a real legal move. */
+/**
+ * Is `alloc` still a possible prefix of this candidate - has no marble been given more steps
+ * than the candidate ultimately allots it?
+ *
+ * Deliberately looser than an exact match: with one eligible marble the only legal candidate
+ * may be "this marble takes all 7", with no candidate at all for the intermediate counts 1-6,
+ * so gating each step on an exact match rejected every one before the count could reach 7 and
+ * softlocked the card. Prefix viability accepts "still consistent with reaching this candidate",
+ * and the exact match is only required once the total hits 7 - so this can't produce a final
+ * allocation that isn't a real legal move.
+ */
 function isViablePrefix(alloc: Record<string, number>, steps: SplitSevenMove['steps']): boolean {
   const byMarble = new Map(steps.map((s) => [s.marbleId, s.steps]));
   return Object.entries(alloc).every(([marbleId, count]) => (byMarble.get(marbleId) ?? 0) >= count);
 }
 
-// Tap the actual marble on the board to pick it (real position, real figure-select target -
-// same language as every other card's figure-select step), then a pixel slider sets that
-// one marble's step count directly. The board shows the *result* of a selection too: the
-// walked path so far, as colored squares that pulse while active (see
-// .board-overlay__path-dot--active) rather than a shape that grows or shrinks. Reaching 7
-// total doesn't auto-submit - a confirm button appears once the allocation exactly matches a
-// real legal move (already enumerated by the engine - see GameEngine.ts
-// generateSevenSplits), so a slider drag that happens to land on the target count doesn't
-// commit the turn before the player meant it to. The slider's own max (maxViableFor) keeps
-// every drag within what the real legal-move set allows.
 export function SevenSplitOverlay({ state, moves, geo, onPlay }: Props) {
   const [allocation, setAllocation] = useState<Record<string, number>>({});
   const [activeMarbleId, setActiveMarbleId] = useState<string | null>(null);
@@ -92,9 +98,8 @@ export function SevenSplitOverlay({ state, moves, geo, onPlay }: Props) {
 
   const eligibleIds = [...new Set(candidates.flatMap((c) => c.inner.steps.map((s) => s.marbleId)))];
 
-  /** Highest step count `marbleId` could take on right now without making every remaining
-   * candidate impossible to reach - the slider's max, so dragging it can never propose an
-   * allocation the engine wouldn't actually allow. */
+  /** The highest step count `marbleId` can take without making every remaining candidate
+   * unreachable - the slider's max, so dragging can never propose an illegal allocation. */
   const maxViableFor = (marbleId: string): number => {
     const others = { ...allocation };
     delete others[marbleId];
@@ -114,17 +119,15 @@ export function SevenSplitOverlay({ state, moves, geo, onPlay }: Props) {
     setAllocation(v === 0 ? others : next);
   };
 
-  // Only set once `allocation` exactly matches a real legal move - lets the confirm button
-  // gate on it rather than submitting the instant a drag happens to hit 7.
+  // Only set once the allocation exactly matches a real legal move, which is what lets the
+  // confirm button gate on it rather than submitting the instant a drag hits 7.
   const readyMatch = total === SEVEN_TOTAL ? candidates.find((c) => matchesAllocation(allocation, c.inner.steps)) : undefined;
 
-  // A single eligible marble is no real split to choose - with exactly one marble able to
-  // move at all, there's only ever one legal combination (it takes all 7), so the allocator
-  // UI (marble picker, slider, confirm button) has nothing left for the player to decide.
-  // Same auto-play-the-only-option pattern as BoardOverlay.tsx's start-marble case, and the
-  // same StrictMode guard it needs: React 18 dev-mode double-invokes an effect with no
-  // cleanup, and onPlay is a real side effect (plays the turn), not a pure render - without
-  // the ref, that double-invoke would silently play two turns' worth of moves back to back.
+  // A single eligible marble is no split to choose - there is exactly one legal combination
+  // (it takes all 7), so the allocator UI has nothing left for the player to decide. Same
+  // auto-play-the-only-option pattern as BoardOverlay's start case, and it needs the same
+  // StrictMode guard: React 18 dev-mode double-invokes an effect with no cleanup, and onPlay is
+  // a real side effect, so without the ref that double-invoke would play two turns' moves.
   const autoPlayedRef = useRef(false);
   useEffect(() => {
     if (eligibleIds.length === 1 && candidates.length === 1 && !autoPlayedRef.current) {
@@ -146,10 +149,10 @@ export function SevenSplitOverlay({ state, moves, geo, onPlay }: Props) {
 
         const plan = planMovement(state, marble, steps);
         const pathDots: Point[] = plan.trackPassed.map((i) => trackPoint(i, trackLength, geo));
-        // Which of those squares the 7 would burn on the way through. Computed against the
-        // real state per marble, not against the board as the other segments would leave it
-        // - same simplification the path preview above already makes, so the dots and their
-        // red highlight always describe the same hypothetical move.
+        // Which of those squares the 7 would burn. Computed against the real state per marble,
+        // not against the board as the other segments would leave it - the same simplification
+        // the path preview already makes, so the dots and their red highlight always describe
+        // the same hypothetical move.
         const captured = new Set(captureIndicesFor(state, marble, steps, 'passOver'));
         const dotCaptures = plan.trackPassed.map((i) => captured.has(i));
         if (plan.location.zone === 'home') {

@@ -1,7 +1,28 @@
-/* Self-hosted (public/fonts/) rather than a Google Fonts link - one console/terminal face
-   used for every size in the app (title, body, buttons), so there's only ever one weight
-   to load. Best rendered at multiples of 11px per the foundry's own guidance - most of this
-   file's font-sizes below are picked off that grid. */
+/* ===========================================================================
+   CrazyPixel - all app styling.
+
+   Two rules govern everything below:
+     1. UI chrome is monochrome. Color is reserved for cards (rank colors) and
+        marbles (player colors), never for backgrounds, panels, buttons or tiles.
+     2. Rule ORDER is load-bearing in places. Several selectors here tie on
+        specificity and are resolved by source order alone - the combined
+        selectors (.playing-card.hand-panel__card, .cp-button.board-status__pass)
+        say so at their own rules. Don't reorder blocks without reading those.
+
+   Sections:
+     Fonts and tokens - Base - Primitives - Hand panel and cards -
+     Board overlay - Seven-split allocator - Rank picker and steal overlay -
+     Steal presentation - Card flip animation - App shell and lobby -
+     Identity and color picker - Win screen - Emote HUD
+   =========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   Fonts and tokens
+   --------------------------------------------------------------------------- */
+
+/* Self-hosted rather than a Google Fonts link: one console/terminal face carries every size
+   in the app, so there is only ever one weight to load. Best rendered at multiples of 11px
+   per the foundry's guidance - most font-sizes below are picked off that grid. */
 @font-face {
   font-family: 'Departure Mono';
   src: url('/fonts/DepartureMono-Regular.woff2') format('woff2'),
@@ -12,8 +33,6 @@
 }
 
 :root {
-  /* UI chrome is deliberately monochrome - color is reserved for cards (suit red/black)
-     and marbles (player colors below), not backgrounds/panels/buttons/tiles. */
   --bg-deep: #000000;
   --bg-panel: #181818;
   --bg-raised: #2c2c2c;
@@ -21,6 +40,10 @@
   --ink-dim: #999999;
   --accent: #ffffff;
 
+  /* Mirrors game/theme.ts and generate-sprites.py's PALETTE, kept in sync by hand (see
+     CLAUDE.md's Conventions). Not all six are referenced from CSS today; they stay so the
+     copies of the palette remain comparable line for line. --player-red has a fourth copy,
+     as a raw RGB triple in TurnTimerBar.tsx's URGENT_COLOR. */
   --player-red: #ff5470;
   --player-blue: #3fb0ff;
   --player-yellow: #ffe66d;
@@ -28,11 +51,9 @@
   --player-purple: #b967ff;
   --player-orange: #ff9f40;
   --card-red: #d22c50;
-  /* The 2's own card colour (generate-sprites.py's PALETTE["card_2"], where it's named
-     "steal"). Kept in sync by hand with that script and game/theme.ts like every other colour
-     here - see CLAUDE.md's Conventions. Used for the steal's own moment of arrival rather
-     than any player's seat colour: what the ring says is "this is the 2 resolving", and the
-     card it's wrapped around is already the answer to "whose". */
+  /* The 2's own card color (generate-sprites.py's card_2). Used for the steal's moment of
+     arrival rather than any player's seat color: it says "this is the 2 resolving", and the
+     card it wraps already answers "whose". */
   --card-steal: #ff2d95;
 
   --focus-ring: var(--ink);
@@ -40,13 +61,13 @@
 
   --target-min-touch: 44px;
 
-  /* One family everywhere - hierarchy comes from size/weight/spacing below, not a second
-     face (see .impeccable.md's Design Context). Both vars kept (not collapsed into one)
-     since every consumer already references one or the other by name. */
+  /* One family everywhere - hierarchy comes from size, weight and spacing, not a second
+     face. Both names are kept rather than collapsed into one since every consumer already
+     references one or the other. */
   --cp-font-display: 'Departure Mono', ui-monospace, 'Cascadia Mono', 'SF Mono', monospace;
   --cp-font-body: 'Departure Mono', ui-monospace, 'Cascadia Mono', 'SF Mono', monospace;
 
-  /* 4pt scale, semantic names - see impeccable's spatial-design guidance. */
+  /* 4pt scale, semantic names. */
   --space-2xs: 4px;
   --space-xs: 8px;
   --space-sm: 12px;
@@ -56,27 +77,28 @@
   --space-2xl: 48px;
   --space-3xl: 64px;
 
-  /* Confident, decisive deceleration - no bounce/elastic, matches the terminal/arcade feel
-     (blocky and snappy, not a soft consumer-app settle). */
+  /* Confident, decisive deceleration - no bounce or elastic, matching the terminal/arcade
+     feel rather than a soft consumer-app settle. */
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
 
-  /* How far anything pinned to the BOTTOM of .board-overlay has to stay clear of that edge.
-     .turn-label / .turn-timer / .steal-alert hang ~20px above the hand panel now (see
-     .turn-label for why), overhanging the board's own bottom edge, so an overlay sitting at
-     a bare bottom:12px lands directly on that text - confirmed live with the steal picker
-     printing straight through "PLAYER 3'S TURN". One token rather than three separate
-     numbers, so moving that text again only has to be reconciled in one place. */
+  /* How far anything pinned to the BOTTOM of .board-overlay must stay clear of that edge.
+     .turn-label / .turn-timer / .steal-alert hang above the hand panel, overhanging the
+     board's bottom edge, so an overlay at a bare bottom:12px lands directly on that text.
+     One token rather than three numbers, so moving that text is reconciled in one place. */
   --board-bottom-clearance: 48px;
 }
+
+/* ---------------------------------------------------------------------------
+   Base
+   --------------------------------------------------------------------------- */
 
 * {
   box-sizing: border-box;
 }
 
-/* Global reduced-motion override - PixelDither.tsx already checks this in JS before running
-   its own rAF loop, but every plain CSS transition/animation added elsewhere (screen
-   transitions, roster rows, marble recolor, button state flips) needs this to actually stop
-   moving; there was no blanket rule to lean on before. */
+/* PixelDither.tsx checks this in JS before running its rAF loop, but every plain CSS
+   transition and animation elsewhere - screen transitions, roster rows, marble recolor,
+   button state flips - needs this blanket rule to actually stop moving. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -105,8 +127,12 @@ body {
   height: 100%;
 }
 
-/* Reserve the display font for short strings (titles, HUD labels) - it's unreadable at
-   body-text sizes and burns through line-length fast. */
+/* ---------------------------------------------------------------------------
+   Primitives
+   --------------------------------------------------------------------------- */
+
+/* The display font is reserved for short strings (titles, HUD labels) - it is unreadable at
+   body-text sizes and burns through line length fast. */
 .cp-title {
   font-family: var(--cp-font-display);
   letter-spacing: 1px;
@@ -127,8 +153,8 @@ body {
 
 .cp-panel,
 .cp-button {
-  /* bg-panel/bg-raised/bg-deep sit at ~1:1 contrast to each other - the border is the
-     boundary between surfaces, not the fill color. Don't drop this. */
+  /* bg-panel, bg-raised and bg-deep sit at roughly 1:1 contrast to each other - the border,
+     not the fill, is what separates one surface from another. Don't drop this. */
   border: 3px solid var(--ink-dim);
 }
 
@@ -149,10 +175,9 @@ body {
   box-shadow: 4px 4px 0 var(--bg-deep);
   padding: 0.6em 1.2em;
   cursor: pointer;
-  /* Only color/border - the press feedback below (:active's transform+box-shadow) stays
-     instant on purpose, a soft transition there would read as mushy rather than mechanical.
-     This just softens the enabled<->disabled flip (WaitingRoom's Start button, live off
-     player count) from a hard cut to a quick crossfade. */
+  /* Color and border only. The press feedback below stays instant on purpose - a transition
+     there would read as mushy rather than mechanical. This softens the enabled/disabled flip
+     (WaitingRoom's Start button, live off player count) from a hard cut to a quick fade. */
   transition: background-color 150ms var(--ease-out-quart), border-color 150ms var(--ease-out-quart),
     color 150ms var(--ease-out-quart);
 }
@@ -162,9 +187,9 @@ body {
   box-shadow: 1px 1px 0 var(--bg-deep);
 }
 
-/* :disabled already suppresses :active natively - [aria-disabled] doesn't, so it needs the
-   same override here or an aria-disabled button visibly "presses" on click despite doing
-   nothing, which reads as broken rather than inert. */
+/* :disabled suppresses :active natively; [aria-disabled] does not, so it needs this or an
+   aria-disabled button visibly presses on click while doing nothing - which reads as broken
+   rather than inert. */
 .cp-button[aria-disabled='true']:active {
   transform: none;
   box-shadow: none;
@@ -180,13 +205,11 @@ body {
   outline: none;
 }
 
-/* [aria-disabled] alongside :disabled - the Start Game button (WaitingRoom.tsx) uses
-   aria-disabled instead of the native attribute specifically so it stays focusable while
-   its disabled-ness can flip on its own (another player joining) - see the a11y review this
-   file's history references. Native disabled would pull it out of the tab sequence, leaving
-   a keyboard/screen-reader user no way to land on it and discover why. Same look either way
-   - a sighted user needs the same "this is inert" signal regardless of which mechanism a
-   button uses, or clicking it reads as broken rather than disabled. */
+/* [aria-disabled] alongside :disabled. WaitingRoom's Start button uses aria-disabled rather
+   than the native attribute so it stays focusable while its disabled-ness flips on its own
+   (another player joining); native disabled would pull it out of the tab sequence, leaving a
+   keyboard or screen-reader user no way to land on it and discover why. The look is the same
+   either way - a sighted user needs the same "this is inert" signal regardless of mechanism. */
 .cp-button:disabled,
 .cp-button[aria-disabled='true'] {
   background: var(--bg-raised);
@@ -196,9 +219,9 @@ body {
   cursor: not-allowed;
 }
 
-/* Toggle buttons (aria-pressed set - player count, mode, etc.) need their own selected/
-   unselected look, since the base .cp-button rule above always renders filled - without
-   this every choice in a group looked identical regardless of which was actually picked. */
+/* Toggle buttons (aria-pressed) need their own selected/unselected look: the base .cp-button
+   rule always renders filled, so without this every choice in a group looked identical
+   regardless of which was picked. */
 .lobby__choice[aria-pressed='false'] {
   background: var(--bg-raised);
   color: var(--ink);
@@ -208,22 +231,20 @@ body {
   box-shadow: 4px 4px 0 var(--bg-deep), 0 0 0 3px var(--ink) inset;
 }
 
+/* ---------------------------------------------------------------------------
+   Hand panel and cards
+   --------------------------------------------------------------------------- */
+
 .hand-panel {
-  /* No fill of its own - GameBoard.tsx's own PixelDither instance (.hand-panel__background,
-     below) shows through from behind, not a grey box sitting between it and the cards.
-     Fixed height, not content-driven - a hand of 2 cards or 6 shouldn't change how much of
-     the screen the board above gets; .hand-panel__cards below handles fitting whatever count
-     there is into one row within this same fixed height instead. Was 136 - grew along with
-     .turn-label/.turn-timer moving down (below) to clear .hand-panel__background's fade
-     zone, so there's still real breathing room around the cards rather than everything
-     just getting more cramped. */
+  /* No fill of its own - .hand-panel__background shows through from behind, rather than a
+     grey box sitting between it and the cards. Fixed height, not content-driven: a hand of
+     2 cards or 6 shouldn't change how much screen the board above gets. */
   height: 156px;
-  /* Top padding > bottom - shifts the centered card row down off dead-center, clear of the
-     fade/label zone above (it was still just grazing the top of the tallest cards). This
-     10px shift (28-8=20, half of that per side of center) has to match
-     HAND_CARDS_CENTER_OFFSET in GameBoard.tsx exactly - that constant is what tells the deal
-     and steal-flight animations where this row's real center actually is, since they can't
-     read this padding value themselves. */
+  /* Top padding exceeds bottom, shifting the centered card row down off dead center and
+     clear of the fade zone above it. The resulting 10px shift ((28 - 8) / 2) must match
+     HAND_CARDS_CENTER_OFFSET in GameBoard.tsx exactly - that constant is how the deal and
+     steal-flight animations know where this row's real center is, since they can't read this
+     padding themselves. */
   padding: 28px 14px 8px;
   display: flex;
   flex-direction: column;
@@ -234,52 +255,39 @@ body {
   z-index: 1;
 }
 
-/* GameBoard.tsx's own PixelDither instance, tinted to the viewer's seat color - the same
-   denser/brighter/multi-level "vivid" look the menu background uses, scoped to just the hand
-   area rather than changing the app-wide background (App.tsx's own instance, the calmer
-   single-tone look) behind the board itself. z-index below .hand-panel's own 1 keeps it
-   behind the cards; DOM order alone would've done that too, but this is explicit like
-   .app-background/.app-content's own z-index pair. */
+/* GameBoard's own PixelDither instance, tinted to the viewer's seat color - the same vivid
+   look the menu background uses, scoped to the hand area rather than changing the app-wide
+   background behind the board. */
 .hand-panel__background {
   position: absolute;
   inset: 0;
-  /* <canvas> is a replaced element - inset:0 alone doesn't stretch a replaced element with
-     width/height left at auto the way it does a plain div (it falls back to the canvas's
-     intrinsic 300x150 default instead). Explicit 100%/100% is what actually makes it fill
-     the box - .app-background (App.tsx's own PixelDither instance) already does both for
-     the same reason, this one was just missing it. */
+  /* <canvas> is a replaced element: inset:0 alone doesn't stretch one whose width/height are
+     auto (it falls back to the intrinsic 300x150 default). Explicit 100%/100% is what makes
+     it fill the box - .app-background does the same for the same reason. */
   width: 100%;
   height: 100%;
   z-index: 0;
   pointer-events: none;
-  /* Fades to solid black (.hand-panel-slot's own bg-deep behind it) so the board area above
-     doesn't cut to this dither with a hard, visible seam. .turn-label/.turn-timer used to be
-     positioned to clear this fade zone; they've since moved above the panel entirely (see
-     .turn-label), so the whole gradient now belongs to the card row alone. */
+  /* Fades to the solid black behind it, so the board area above doesn't cut to this dither
+     with a hard seam. */
   mask-image: linear-gradient(to bottom, transparent 0, #000 200px);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 200px);
-  /* Same crossfade as .app-background - GameBoard toggles this canvas's opacity on whose
-     turn it is (PixelDither's `visible` prop), and the hand area going dark should read as a
-     transition rather than a hard cut. Matches that 300ms so the two backgrounds fade
-     together instead of one lagging the other. */
+  /* Matches .app-background's own 300ms, so the two backgrounds fade together when the turn
+     changes instead of one lagging the other. */
   transition: opacity 300ms ease;
 }
 
 .hand-panel-slot {
-  /* No transition here anymore. A 250ms crossfade sounds smoother than a hard cut, but the
-     deal animation's own cards vanish the INSTANT dealPlan clears (a plain unmount, no exit
-     fade of its own) - so a slow fade-IN on this side meant a real gap where neither the
-     deal clones nor the real hand were visible (opacity climbing from 0 for the first chunk
-     of that 250ms - confirmed live, read as the hand disappearing for a beat). Now that the
-     deal animation's cards land at the exact same position/size the real hand renders at
-     (see DealAnimation.tsx), a hard cut lines up seamlessly - nothing to crossfade. */
-  /* Positioning context for .turn-label/.turn-timer below - both overlay the top edge of
-     this slot ("on top of the cards") rather than sitting in normal flow above it. */
+  /* Deliberately NO transition. A crossfade sounds smoother than a hard cut, but the deal
+     animation's cards vanish the instant dealPlan clears (a plain unmount, no exit fade), so
+     a slow fade-in here left a real gap where neither the deal clones nor the real hand were
+     visible. Now that the deal animation lands its cards at the exact position and size the
+     real hand renders at, a hard cut lines up seamlessly - there is nothing to crossfade. */
+  /* Positioning context for .turn-label / .turn-timer / .steal-alert below. */
   position: relative;
-  /* Opaque backing for .hand-panel__background's own dither canvas - without this, the
-     app-wide background (App.tsx's PixelDither, position: fixed behind literally
-     everything) still showed through from underneath it too, and the two independent
-     dithers visibly clashed/overlapped instead of this area reading as one clean pattern. */
+  /* Opaque backing for .hand-panel__background's canvas. Without it the app-wide background
+     (position: fixed behind everything) showed through too, and the two independent dithers
+     visibly clashed instead of this area reading as one pattern. */
   background: var(--bg-deep);
 }
 
@@ -293,28 +301,23 @@ body {
 }
 
 /* A fixed 1/6th-of-the-row width, not flex-grow dividing space among however many cards are
-   actually in hand right now - 2 cards and 6 cards render at the *same* size instead of a
-   short hand looking bigger than a full one, while still guaranteeing all 6 (the max, see
-   ROUND_DEAL_SIZES) fit one row without wrapping/overflowing on a narrow phone. Kept off the
-   base .playing-card class (below) since FlyingCard/DealAnimation/StealCardOverlay use that
-   class outside this flex row and set their own explicit sizes - the combined selector
-   (.playing-card.hand-panel__card, specificity 0,2,0) is deliberate, not just style:
-   .playing-card's own plain-class width:80px rule sits *after* this one in the file, and a
-   single-class selector here would have lost that tie and silently rendered every hand card
-   at a fixed 80px regardless of viewport (confirmed live - cards overflowed off both edges
-   of a 375px phone screen before this was a combined selector). */
+   in hand: 2 cards and 6 cards render at the same size, while all 6 (the max, see
+   ROUND_DEAL_SIZES) still fit one row without wrapping on a narrow phone.
+
+   THE COMBINED SELECTOR IS DELIBERATE. .playing-card's own plain-class width:80px rule sits
+   AFTER this one in the file and ties on specificity, so a single-class selector here loses
+   on source order and silently renders every hand card at a fixed 80px regardless of
+   viewport - cards overflowing off both edges of a 375px phone. Keep the two classes. */
 .playing-card.hand-panel__card {
   flex: 0 0 auto;
   width: calc((100% - 5 * 8px) / 6);
   max-width: 80px;
 }
 
-/* Pixel-art card texture (see scripts/generate-sprites.py's make_card_face) applied as a
-   background-image via --card-face, set per-card in HandPanel/FlyingCard/DealAnimation -
-   color now encodes rank, not suit (suit stopped mattering for anything, rules or art). 80px
-   wide at its biggest - matches TableScene.ts's own CARD_WIDTH so the discard pile's card
-   and a hand card read as the same physical size, not two independently-tuned ones. Opacity
-   transition covers legality flipping mid-game and .hand-panel-slot's crossfade above -
+/* The pixel-art card texture (generate-sprites.py's make_card_face) as a background-image via
+   --card-face, set per card by whichever component renders it. Color encodes rank, not suit.
+   80px at its biggest, matching cardArt.ts's CARD_WIDTH so a hand card and the discard pile's
+   card read as one physical size. The opacity transition covers legality flipping mid-game -
    without it a just-dealt illegal card would be dim the instant it appears rather than
    settling into that state visibly. */
 .playing-card {
@@ -330,30 +333,24 @@ body {
   transition: transform 0.12s ease, opacity 300ms ease;
 }
 
-/* Classic corner-index rank display (see CardRankIndices.tsx) - top-left upright, bottom-
-   right rotated 180deg so it still reads right-side-up if the card were flipped, same trick
-   a real deck uses. A 4-direction shadow stack stands in for a text outline (border-image/
-   text-stroke isn't reliable enough across browsers here) so it stays readable over every
-   card color, not just a fixed black-on-white. */
+/* Corner rank indices (CardRankIndices.tsx) - top-left upright, bottom-right rotated, the
+   trick a real deck uses. The 8-direction shadow stack stands in for a text outline
+   (text-stroke isn't reliable enough across browsers here) so the rank stays readable over
+   every card color. */
 .playing-card__index {
   position: absolute;
   color: #ffffff;
   font-family: var(--cp-font-display);
   font-weight: 700;
-  /* 1.2rem, not the 1.05 this was originally tuned at for an 80px card at full desktop size
-     - every card context in the app (hand, rank-picker, flying, laid, dealt) now renders at
-     the SAME width (see handCardWidthFor, cardArt.ts), which on a narrow phone shrinks well
-     below 80px, and 1.05rem/11px-inset read as small and cramped there. This is the one
-     index style every card uses - there is no remaining context that stays at a fixed 80px
-     the old smaller size was tuned for, so there's no reason for a second, larger variant
-     scoped to specific classes (that's exactly what let flying-card/laid-card/deal-animation
-     drift out of sync with hand-panel/rank-picker before - each new card context had to
-     remember to opt into the override, and three of them didn't). */
+  /* Every card context in the app now renders at the SAME width (see handCardWidthFor), which
+     on a narrow phone is well below 80px - so there is exactly one index size, and no reason
+     for a second variant scoped to specific card classes. That is precisely what let
+     flying-card / laid-card / deal-animation drift out of sync before: each new card context
+     had to remember to opt into an override, and three of them didn't. */
   font-size: 1.2rem;
   line-height: 1;
-  /* 1px but 8-direction (was 1px cardinal-only, then briefly 2px 8-direction - too thick).
-     Same thickness as before, just fills in the diagonal gap where two cardinal shadows
-     used to only meet at a corner instead of overlapping. */
+  /* 1px, 8-direction: the diagonals fill in the gap where two cardinal shadows would only
+     meet at a corner instead of overlapping. */
   text-shadow:
     1px 0 0 #000000,
     -1px 0 0 #000000,
@@ -383,40 +380,37 @@ body {
   outline-offset: 3px;
 }
 
-/* HandPanel uses aria-disabled, not the native `disabled` attribute, specifically so this
-   stays a real transitionable element - see .playing-card--dim below. */
+/* HandPanel uses aria-disabled rather than the native attribute, so this stays a real
+   transitionable element - see .playing-card--dim. */
 .playing-card[aria-disabled='true'] {
   box-shadow: none;
   cursor: not-allowed;
 }
 
-/* Applied a beat after an illegal card first appears (see HandPanel.tsx's settle timer),
-   never on the same frame as aria-disabled itself - a brand-new DOM node has no prior state
-   to transition FROM, so putting the opacity directly on the disabled state meant it just
-   painted dim from frame one, at the same instant as the hand's own reveal (confirmed live -
-   read as a glitchy pop, not a settle). This class starts absent (full opacity, transition has
-   something real to interpolate from) and gets added afterward. */
+/* Applied a beat AFTER an illegal card first appears (HandPanel's settle timer), never on the
+   same frame as aria-disabled. A brand-new DOM node has no prior state to transition from, so
+   putting the opacity on the disabled state itself painted dim from frame one, at the same
+   instant as the hand's reveal - a glitchy pop rather than a settle. This class starts absent
+   and is added afterward, giving the transition something real to interpolate from. */
 .playing-card--dim {
   opacity: 0.35;
 }
 
-/* The card an opponent has just taken, still sitting in its old slot while the steal plays
-   out (see HandPanel's stolenGhost / GameBoard's STEAL_MARK_MS). Deliberately the same lift
-   the selected-card state uses ([aria-pressed='true'] above) so it reads with a vocabulary
-   the player already knows - "this specific card is the one in play" - just in red rather
-   than white, since this one is happening TO them rather than by them. Red is not the only
-   cue (position and the alert text above carry it too), so the state isn't lost to anyone
-   who can't distinguish it - WCAG 1.4.1. */
+/* The card an opponent has just taken, still in its old slot while the steal plays out
+   (HandPanel's stolenGhost). Deliberately the same lift as the selected-card state above, so
+   it reads with a vocabulary the player already knows - "this card is the one in play" - just
+   in red, since this one is happening TO them. Red is not the only cue: position and the
+   alert text carry it too, so the state isn't lost to anyone who can't distinguish it
+   (WCAG 1.4.1). */
 .hand-panel__card--stolen {
   outline: 3px solid var(--card-red);
   outline-offset: 3px;
   box-shadow: 2px 6px 0 rgba(0, 0, 0, 0.6);
-  /* The lift is an ANIMATION, not the transform + .playing-card's own transform transition
-     it looks like it could be - this element is inserted into the row already marked, and a
-     brand-new DOM node has no previous computed value to transition FROM, so it would just
-     paint lifted on frame one with no motion at all (the same trap .playing-card--dim above
-     documents at length). Animations run on freshly-inserted nodes; transitions don't. The
-     flash waits out the lift, so the two read as one gesture rather than starting together. */
+  /* The lift is an ANIMATION, not a transform plus .playing-card's transform transition. This
+     element is inserted into the row already marked, and a brand-new node has no previous
+     computed value to transition from, so it would paint lifted on frame one with no motion
+     at all. Animations run on freshly-inserted nodes; transitions don't. The flash waits out
+     the lift so the two read as one gesture. */
   animation: stolen-card-mark 220ms var(--ease-out-quart) both,
     stolen-card-flash 520ms steps(2, end) 220ms infinite;
   cursor: default;
@@ -431,11 +425,10 @@ body {
   }
 }
 
-/* Hard two-step alternation rather than a smooth pulse - matches the board's own figure-ring
-   blink and the general blocky/arcade rule (see this file's opening comment) instead of
-   introducing a soft consumer-app breathe. Runs unbounded on purpose, unlike .steal-alert
-   below: the marked card only exists for STEAL_MARK_MS (~1.1s), nowhere near the 5s past
-   which blinking needs a way to be stopped (WCAG 2.2.2). */
+/* A hard two-step alternation, not a smooth pulse - it matches the board's figure-ring blink
+   and the blocky arcade rule rather than introducing a soft breathe. Unbounded is safe here,
+   unlike .steal-alert: the marked card only exists for STEAL_MARK_MS (~1.1s), nowhere near
+   the 5s past which blinking must be stoppable (WCAG 2.2.2). */
 @keyframes stolen-card-flash {
   0% {
     outline-color: var(--card-red);
@@ -450,12 +443,10 @@ body {
   outline-offset: 3px;
 }
 
-/* The discard pile's face-up card (see LaidCard.tsx) - positioned over the board by left/top
-   plus a translate(-50%, -50%) set inline (same centering technique as
-   .opponent-hand-counts__card), so the pop-in keyframe below has to fold that same translate
-   into its own from/to instead of overwriting it. React remounts this element (keyed by
-   card.id in GameBoard.tsx) each time a new card lands, which is what re-triggers the
-   animation - no JS timer needed, unlike FlyingCard/DealAnimation's flight animations. */
+/* The discard pile's face-up card (LaidCard.tsx), positioned by left/top plus an inline
+   translate(-50%, -50%). The keyframe has to fold that same translate into its own from/to
+   or it would overwrite the centering outright. React remounts the element on each new card
+   (keyed by card.id), which is what re-triggers this - no JS timer needed. */
 @keyframes laid-card-pop {
   from {
     transform: translate(-50%, -50%) scale(0.6);
@@ -469,28 +460,31 @@ body {
   animation: laid-card-pop 200ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
-/* Board move highlights - see BoardOverlay.tsx. Real buttons positioned to match the glow
-   they render, not a separate text list. */
+/* ---------------------------------------------------------------------------
+   Board overlay - real buttons positioned over the Phaser art (BoardOverlay.tsx)
+   --------------------------------------------------------------------------- */
+
+/* pointer-events: none so path decorations don't block clicks through to the board. Every
+   REAL interactive element inside this layer therefore needs its own pointer-events: auto,
+   or it renders but silently can't be tapped. */
 .board-overlay {
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
 
-/* Card-count badge over each opponent's kennel (see OpponentHandCounts.tsx) - always
-   visible, not gated by whose turn it is. Non-interactive (no pointer-events needed), but
-   deliberately not aria-hidden - the count is real information, just not a control. */
+/* Card-count badges over each opponent's kennel (OpponentHandCounts.tsx) - always visible,
+   not gated on whose turn it is. Non-interactive, but deliberately not aria-hidden: the count
+   is real information, just not a control. */
 .opponent-hand-counts {
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
 
-/* One of these per card in an opponent's hand (see OpponentHandCounts.tsx), fanned with a
-   small horizontal offset per card - shaped like a tiny playing card (same 5/7 aspect ratio
-   as .playing-card, sharp corners, small drop shadow), same size the old single count badge
-   used, but now there are physically as many of them as there are cards, not a digit to
-   read. */
+/* One per card in that opponent's hand, fanned with a small offset each. Shaped like a tiny
+   playing card (same 5/7 ratio as .playing-card) so the count reads as a quantity of cards at
+   a glance rather than a digit to parse. */
 .opponent-hand-counts__card {
   position: absolute;
   transform: translate(-50%, -50%);
@@ -506,24 +500,21 @@ body {
   justify-content: center;
 }
 
-/* Count readout, only on the topmost (last-drawn) card of the fan - lets the actual number
-   still be read at a glance without going back to a single numbered badge for every card. */
+/* Only on the topmost card of the fan, so the exact number is still readable without going
+   back to a numbered badge on every card. 11px per Departure Mono's own pixel-grid guidance. */
 .opponent-hand-counts__count {
   font-family: var(--cp-font-display);
-  /* Was 9px - below Departure Mono's own "multiples of 11px" pixel-perfect guidance, and it
-     read as too small on the 18px card. */
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
   color: var(--ink);
 }
 
-/* One beat as a stolen card lands on this stack (see GameBoard's FAN_POP_MS) - the count
-   itself has already ticked up by the time the flight ends, and a number changing while the
-   eye is following a card across the board is not something anyone notices. Folds the base
-   rule's own translate(-50%, -50%) into every step: that centering is what positions the
-   card at all, and a transform here would otherwise replace it outright and fling the whole
-   fan down-right by half its size (same trap .laid-card's keyframe documents above). */
+/* One beat as a stolen card lands on this stack. The count has already ticked up by the time
+   the flight ends, and a number changing while the eye follows a card across the board is not
+   something anyone notices. Every step folds in the base rule's own translate(-50%, -50%),
+   which is what positions the card at all - a bare transform here would replace it and fling
+   the whole fan down-right by half its size. */
 @keyframes opponent-fan-pop {
   0% {
     transform: translate(-50%, -50%) scale(1);
@@ -541,20 +532,17 @@ body {
   animation: opponent-fan-pop 280ms ease-out both;
 }
 
-/* Pass-hand fallback anchors between the discard pile and the ring's bottom edge (see
-   BoardStatus.tsx) - the turn label itself lives outside the board now, right above the hand
-   panel (see .turn-label). */
+/* The pass-hand fallback, anchored between the discard pile and the ring's bottom edge (see
+   BoardStatus.tsx). */
 .board-status__pass {
   position: absolute;
   transform: translate(-50%, -50%);
-  /* Matches .board-overlay__seven-confirm exactly (font-size/padding, plus the red border
-     and label below) - both are "commit to this" board controls, so they read as the same
-     kind of thing rather than two unrelated button looks. The one thing deliberately NOT
-     copied from that rule is its min-width/min-height: 0. The seven-confirm button sits in a
-     cramped overlay row where those 44px floors would break the layout; this one is a
-     standalone control with room around it, and zeroing them here would shrink it to roughly
-     31px tall - under the touch-target minimum on a phone-first game, for a button that's
-     already the only thing a stuck player can tap. */
+  /* Matches .board-overlay__seven-confirm's font-size, padding, border and label color - both
+     are "commit to this" board controls and should read as the same kind of thing. The one
+     thing deliberately NOT copied is that rule's min-width/min-height: 0. Seven-confirm sits
+     in a cramped overlay row where the 44px floors break the layout; this is a standalone
+     control with room around it, and zeroing them here shrinks it to roughly 31px tall - under
+     the touch-target minimum, for the only thing a stuck player can tap. */
   font-size: 0.8rem;
   padding: 0.4em 0.8em;
   border-color: var(--card-red);
@@ -562,45 +550,33 @@ body {
   white-space: nowrap;
   pointer-events: auto;
   z-index: 10;
-  /* iOS Safari can spend up to ~300ms deciding whether a tap is the first half of a double-
-     tap-to-zoom before committing it as a click - manipulation tells it this element never
-     needs that gesture, so a single tap here always registers immediately. Confirmed absent
-     project-wide (grepped theme.css) even though this is exactly the kind of isolated,
-     easy-to-double-tap-by-accident control it matters most for. */
+  /* iOS Safari can spend ~300ms deciding whether a tap is the first half of a
+     double-tap-to-zoom. `manipulation` tells it this element never needs that gesture, so a
+     single tap registers immediately. */
   touch-action: manipulation;
 }
 
-/* .cp-button:active's own translate(3px, 3px) "pressed" nudge (further up this file) would
-   otherwise completely REPLACE this button's translate(-50%, -50%) centering, not add to it -
-   CSS transform isn't cumulative across separate rules, and .cp-button:active wins the
-   cascade on specificity alone regardless of source order. That silently un-centers the
-   button the instant it's pressed (a jump of roughly half its own width/height, not a subtle
-   3px nudge - it snaps to being positioned as if `left`/`top` were its top-left corner
-   instead of its center), which is also exactly why only taps landing on the side the button
-   jumps *toward* still register: the box moves out from under a touch that started anywhere
-   else before touchend's hit-test runs. Re-stating both transforms together here (higher
-   specificity than plain .cp-button:active - two classes instead of one) keeps the press
-   nudge purely additive to the existing centering instead of replacing it. */
+/* .cp-button:active's translate(3px, 3px) would REPLACE this button's centering transform
+   rather than add to it - transform isn't cumulative across rules, and that selector wins on
+   specificity regardless of source order. The button would silently un-center the instant it
+   is pressed, jumping by half its own size, which is also why only taps landing on the side
+   it jumps toward still registered: the box moves out from under a touch that started
+   anywhere else before touchend's hit-test runs. Re-stating both transforms together, at
+   higher specificity, keeps the press nudge additive. */
 .cp-button.board-status__pass:active {
   transform: translate(calc(-50% + 3px), calc(-50% + 3px));
 }
 
-/* Overlays the top edge of the hand panel (see .hand-panel-slot's position:relative) rather
-   than sitting in normal flow above it - "more on top of the cards" per feedback. Needs its
-   own outline (not just --ink-dim) since it now sits over unpredictable card art instead of
-   the plain PixelDither background. Crossfades on change instead of snapping. */
+/* Whose turn it is, overlaying the top edge of the hand panel rather than sitting in flow
+   above it. Needs its own text outline since it sits over unpredictable card art. */
 .turn-label {
   position: absolute;
-  /* Negative - sits ABOVE .hand-panel-slot entirely, over the board's empty lower margin,
-     not inside the panel's top padding where it used to be. The stolen-card mark
-     (.hand-panel__card--stolen) lifts a card 10px and scales it 1.06, which put its top edge
-     at roughly y=18 inside the panel - straight through where this text and the timer below
-     were sitting. Moving both clear of the card row is what lets that animation (and the
-     transfer flight leaving from it) play over open space instead of through the UI. Costs
-     the text its colored-dither backdrop; the 4-direction text-shadow below already made it
-     legible on unpredictable card art, so it holds up over the board too. Far enough up to
-     clear the marked card with .turn-timer stacked BELOW it too - measured against the
-     lifted card's real top edge (~18px into the panel), not the resting one. */
+  /* Negative: sits ABOVE .hand-panel-slot entirely, over the board's lower margin. The
+     stolen-card mark lifts a card 10px and scales it 1.06, putting its top edge about 18px
+     into the panel - straight through where this and the timer used to sit. Moving both clear
+     of the card row is what lets that animation, and the transfer flight leaving from it, play
+     over open space instead of through the UI. Measured against the lifted card's real top
+     edge, with .turn-timer stacked below this. */
   top: -34px;
   left: 0;
   right: 0;
@@ -610,8 +586,6 @@ body {
   padding: 0;
   text-align: center;
   font-family: var(--cp-font-display);
-  /* Was 10px - below Departure Mono's own "multiples of 11px" pixel-perfect guidance, and it
-     read as too small (same fix as .turn-timer__seconds/.opponent-hand-counts__count). */
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 1px;
@@ -625,13 +599,11 @@ body {
   opacity: 1;
 }
 
-/* Thin countdown strip sitting just below .turn-label, still over the hand panel's top edge
-   (see TurnTimerBar.tsx) - online only, server-enforced, this is cosmetic warning only.
-   "Reversed" loading bar: starts full and shrinks as time runs out, not the other way. */
+/* Countdown strip just below .turn-label (TurnTimerBar.tsx). Online only, and cosmetic - the
+   server enforces the real timeout. A reversed loading bar: starts full and shrinks. */
 .turn-timer {
   position: absolute;
-  /* Keeps the same 14px gap below .turn-label wherever that moves - see its comment above
-     for why both now sit above the panel rather than inside its top padding. */
+  /* Keeps a 14px gap below .turn-label wherever that moves. */
   top: -20px;
   left: 8px;
   right: 8px;
@@ -644,8 +616,6 @@ body {
 
 .turn-timer__seconds {
   font-family: var(--cp-font-display);
-  /* Was 9px - below Departure Mono's own "multiples of 11px" pixel-perfect guidance, and it
-     read as too small (same fix as .opponent-hand-counts__count). */
   font-size: 12px;
   font-weight: 700;
   min-width: 24px;
@@ -665,12 +635,10 @@ body {
   transition: width 200ms linear, background-color 200ms linear;
 }
 
-/* The actual tap target for a move's landing square - a small animated ring, not a filled
-   shape, so it reads as "tap here" without a big block of color sitting on the board. The
-   button itself keeps the full 44px hit area (WCAG 2.5.8's touch-target floor - see
-   BoardOverlay.tsx's TARGET_SIZE), but the visible circle drawn via ::before is deliberately
-   smaller than that box. The walked squares leading up to it (see .board-overlay__path-dot
-   below) are the solid-white ones - this is the one spot you actually tap, they're not. */
+/* The tap target for a move's landing square. The button keeps the full 44px hit area (WCAG
+   2.5.8, see BoardOverlay's TARGET_SIZE) while the visible ring drawn via ::before is
+   smaller, so it reads as "tap here" without a block of color on the board. The squares
+   leading up to it (.board-overlay__path-dot) are the solid ones; this is the one you tap. */
 .board-overlay__target {
   position: absolute;
   border-radius: 50%;
@@ -690,9 +658,9 @@ body {
   animation: board-figure-pulse 1.4s ease-in-out infinite;
 }
 
-/* This landing square holds a marble the move sends home. Red rather than the usual white
-   ring - the one place color is allowed to carry meaning on this board, so it also gets
-   spelled out in the button's aria-label (see BoardOverlay's captureCountLabel). */
+/* This landing square holds a marble the move sends home. The one place color carries meaning
+   on this board, so it is also spelled out in the button's aria-label (BoardOverlay's
+   captureCountLabel) - WCAG 1.4.1. */
 .board-overlay__target--capture::before {
   border-color: var(--card-red);
   box-shadow: 0 0 8px var(--card-red);
@@ -714,11 +682,10 @@ body {
   }
 }
 
-/* Figure-select phase (pick a marble, a kennel piece, or an opponent's hand) sits directly
-   ON TOP of real board art - a filled disc there used to wash out the very piece being
-   picked. Instead: the button itself stays fully transparent (still a real 44px hit target,
-   see BoardOverlay.tsx's TARGET_SIZE), and a ring drawn OUTSIDE its box via ::before marks
-   it - bigger than the piece underneath, hollow in the middle, so nothing gets obscured. */
+/* Figure-select phase (pick a marble, your base, or an opponent's hand). These sit directly on
+   top of real board art, where a filled disc washed out the very piece being picked. Instead
+   the button stays fully transparent - still a real 44px hit target - and a hollow ring drawn
+   outside its box marks it, so nothing underneath is obscured. */
 .board-overlay__figure {
   background: transparent;
   border-radius: 50%;
@@ -745,18 +712,17 @@ body {
   outline-offset: 2px;
 }
 
-/* Marks an opponent's fanned hand-card stack (see figureTargets' forceDraw case), which is
-   wider than the 44px button box - a full 6-card fan runs ~53px - so this ring is drawn
-   OUTSIDE the box (negative inset) to enclose the whole stack instead of cropping into it.
-   The hit area itself stays the 44px WCAG floor. */
+/* An opponent's fanned hand-card stack (figureTargets' forceDraw case) is wider than the 44px
+   button box - a full 6-card fan runs ~53px - so this ring is drawn OUTSIDE the box to
+   enclose the whole stack rather than cropping into it. The hit area stays the 44px floor. */
 .board-overlay__figure--opponent::before {
   border-color: var(--card-red);
   inset: -8px;
 }
 
-/* The 7-split's currently-selected marble (the one the slider below is adjusting) - a third
-   color distinct from both the plain figure ring and the opponent-steal red, so it's obvious
-   at a glance which marble the slider actually applies to among several eligible ones. */
+/* The 7-split's currently-selected marble: a third color, distinct from both the plain figure
+   ring and the opponent-steal red, so it is obvious which marble the slider applies to among
+   several eligible ones. */
 .board-overlay__figure--active::before {
   border-color: var(--player-blue);
 }
@@ -774,16 +740,15 @@ body {
 }
 
 .board-overlay__back {
-  /* Was left:50%/bottom:12px - the exact same anchor .board-overlay__fallback uses, so the
-     two sat directly on top of each other any time both rendered at once (multiple figures
-     AND an unresolved fallback move). Top-left corner instead - clear of the fallback list,
-     the stack, and every figure/target position on the board. */
+  /* Top-left, deliberately not the bottom-center anchor .board-overlay__fallback uses - the
+     two sat directly on top of each other whenever both rendered (multiple figures AND an
+     unresolved fallback move). Clear of the fallback list, the card stacks, and every
+     figure/target position. */
   position: absolute;
   left: 12px;
   top: 12px;
-  /* .board-overlay (the parent) sets pointer-events: none on the whole layer so path dots
-     etc. don't block clicks through to the board - this button needs its own opt back in,
-     or it renders but silently can't be tapped (confirmed live - the click never landed). */
+  /* The parent layer sets pointer-events: none, so this needs its own opt back in or it
+     renders but can't be tapped. */
   pointer-events: auto;
 }
 
@@ -804,10 +769,9 @@ body {
   min-height: 0;
 }
 
-/* Non-interactive squares along a walked path (see BoardOverlay's path.slice(0,-1)) - solid
-   white fill, rectangular to match the board's own square tiles rather than a circle. Not
-   the tap target itself (see .board-overlay__target above, the small ring at the end of the
-   path) - just marking which squares get walked along the way. */
+/* Non-interactive squares along a walked path. Solid white and rectangular, matching the
+   board's own square tiles rather than a circle - these mark which squares get walked, and
+   are explicitly NOT the tap target (that's the ring at the end of the path). */
 .board-overlay__path-dot {
   position: absolute;
   border-radius: 3px;
@@ -817,19 +781,23 @@ body {
   animation: board-target-pulse 1.4s ease-in-out infinite;
 }
 
-/* A square the 7 burns on its way through (only the 7 captures mid-path - every other card
-   captures on its landing square alone, which is the tap target, not a dot). Same red as the
-   capture ring above, glowing so it reads as a kill rather than just another walked square. */
+/* A square the 7 burns on its way through - only the 7 captures mid-path, every other card
+   captures on its landing square, which is the tap target rather than a dot. Same red as the
+   capture ring, glowing so it reads as a kill and not just another walked square. */
 .board-overlay__path-dot--capture {
   background: var(--card-red);
   box-shadow: 0 0 8px var(--card-red);
 }
 
+/* ---------------------------------------------------------------------------
+   Seven-split allocator (SevenSplitOverlay.tsx / PixelSlider.tsx)
+   --------------------------------------------------------------------------- */
+
+/* Slider, status line and actions are anchored to the board's bottom edge as one stacked
+   panel, rather than floating in the ring's empty middle where they read as a second UI layer
+   competing for the same central spot. The actions row in particular clears the draw/discard
+   stacks, which occupy the very bottom. */
 .seven-slider {
-  /* Under the board itself now, stacked above .board-overlay__seven-status/-actions (56px/
-     12px from the bottom) rather than floating in the ring's empty middle - reads as one
-     panel anchored to the bottom edge instead of two separate UI layers competing for the
-     same central spot. */
   position: absolute;
   left: 50%;
   bottom: 160px;
@@ -850,8 +818,6 @@ body {
 }
 
 .board-overlay__seven-actions {
-  /* Above the draw/discard stack now (was bottom:12px, same zone the stack itself sits in
-     - see boardLayout.ts's stackCenter - so the two overlapped). */
   position: absolute;
   left: 50%;
   bottom: 96px;
@@ -874,10 +840,9 @@ body {
   color: var(--card-red);
 }
 
-/* Pixel-styled step slider (SevenSplitOverlay) - a real <input type="range"> for keyboard/
-   screen-reader semantics, hidden (opacity, not display:none, so it stays interactive) over
-   a row of decorative blocky notches that mirror its value, matching the board's own square
-   tile language instead of a native rounded thumb-and-track. */
+/* A real <input type="range"> for keyboard and screen-reader semantics, hidden with opacity
+   (not display:none, so it stays interactive) over a row of decorative blocky notches that
+   mirror its value - the board's square-tile language instead of a native rounded thumb. */
 .pixel-slider__label {
   display: block;
   font-size: 0.75rem;
@@ -899,9 +864,9 @@ body {
   margin: 0;
   opacity: 0;
   cursor: pointer;
-  /* Without this, mobile browsers can claim a touch-drag starting on this input for their
-     own scroll/pan gesture handling instead of letting the range track it - taps landed
-     (jumping to a value) but a real drag across it didn't, on touch specifically. */
+  /* Without this, mobile browsers claim a touch-drag starting on this input for their own
+     scroll/pan handling instead of letting the range track it - taps landed but a real drag
+     across it didn't, on touch specifically. */
   touch-action: none;
 }
 
@@ -923,11 +888,20 @@ body {
   background: var(--card-red);
 }
 
+/* The real input is invisible, so the focus ring has to be drawn on the notches instead. */
 .pixel-slider:focus-within .pixel-slider__track {
   outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
+/* ---------------------------------------------------------------------------
+   Rank picker and steal overlay
+   --------------------------------------------------------------------------- */
+
+/* "What should the Joker play as", and the steal's opponent chooser. Both are card-face
+   buttons at whatever width a hand card currently renders at, set inline by BoardOverlay via
+   handCardWidthFor - this centered flex-wrap row can't lean on .hand-panel__card's 6-slot
+   calc(). Their rank indices use the plain base .playing-card__index style. */
 .rank-picker {
   position: absolute;
   left: 50%;
@@ -940,13 +914,6 @@ body {
   max-width: min(90%, 480px);
   pointer-events: auto;
 }
-
-/* "What should the Joker play as" - real card-face buttons the same current width a hand
-   card renders at (set inline by BoardOverlay.tsx via handCardWidthFor - the picker's own
-   centered flex-wrap row can't lean on .hand-panel__card's 6-slot calc() formula), wrapping
-   via .rank-picker's own flex-wrap when there are many ranks to offer. Its rank index uses
-   the plain base .playing-card__index style now (theme.css, above) - every card context
-   renders at this same width, so there's nothing left to override here. */
 
 .rank-picker__chip {
   font-size: 0.85rem;
@@ -965,8 +932,8 @@ body {
   align-items: center;
   gap: 10px;
   pointer-events: auto;
-  /* An explicit width (not just max-width) - .steal-overlay__card's percentage-based sizing
-     needs a concrete value to resolve against, not an auto/shrink-to-fit parent. */
+  /* An explicit width, not just max-width: .steal-overlay__card's percentage sizing needs a
+     concrete value to resolve against, not an auto/shrink-to-fit parent. */
   width: min(94%, 560px);
 }
 
@@ -978,11 +945,10 @@ body {
   width: 100%;
 }
 
-/* Same fixed 1/6th-slot sizing as .hand-panel__card - an opponent's face-down hand should
-   read as the same physical card size as every other card on screen, not its own smaller
-   scale, and always lay out in one horizontal row instead of wrapping. Combined selector for
-   the same cascade-order reason as .playing-card.hand-panel__card above, not left to file
-   order. */
+/* Same fixed 1/6th-slot sizing as .hand-panel__card - an opponent's face-down hand should read
+   as the same physical card size as every other card on screen, and always lay out in one row
+   rather than wrapping. Combined selector for the same cascade-order reason documented at
+   .playing-card.hand-panel__card. */
 .playing-card.steal-overlay__card {
   flex: 0 0 auto;
   width: calc((100% - 5 * 8px) / 6);
@@ -1004,18 +970,16 @@ body {
   min-height: 0;
 }
 
-/* Takes .turn-label's exact position (the two never render together - see GameBoard) so the
-   line above the hand always holds exactly one message. Colored by the player doing the
-   stealing, matching the hand's own dither behind it - the one place in this otherwise
-   monochrome chrome where a player color is doing the talking, which is what makes "who" the
-   part you register first. Clamped to one line: a display name is whatever a player typed,
-   and this sits over the cards. */
-/* Empty gap held open at the right-hand end of the hand while a stolen card flies home (see
-   HandPanel's incomingSlotWidth). Nothing is drawn in it - the flying card is what the eye
-   follows; this only pushes the row over so there's somewhere for it to land. Width is set
+/* ---------------------------------------------------------------------------
+   Steal presentation (victim's side)
+   --------------------------------------------------------------------------- */
+
+/* An empty gap held open at the right-hand end of the hand while a stolen card flies home
+   (HandPanel's incomingSlotWidth). Nothing is drawn in it - the flying card is what the eye
+   follows; this only pushes the row over so there is somewhere for it to land. Width is set
    inline and transitions from 0, which is what makes the row slide rather than jump. The
-   negative margin cancels .hand-panel__cards' own 8px gap while the slot is still closed, so
-   the row doesn't lurch by a gap's width the instant the slot appears. */
+   negative margin cancels .hand-panel__cards' own gap while the slot is still closed, so the
+   row doesn't lurch by a gap's width the instant the slot appears. */
 .hand-panel__slot {
   flex: 0 0 auto;
   aspect-ratio: 5 / 7;
@@ -1027,9 +991,13 @@ body {
   margin-left: 0;
 }
 
+/* Takes .turn-label's exact position - the two never render together, so the line above the
+   hand always holds exactly one message. Colored by the player doing the stealing, matching
+   the hand's own dither behind it: the one place in this monochrome chrome where a player
+   color does the talking, which is what makes "who" the part you register first. Clamped to
+   one line, since a display name is whatever a player typed and this sits over the cards. */
 .steal-alert {
   position: absolute;
-  /* Same line .turn-label occupies - see its comment on why that's above the panel now. */
   top: -34px;
   left: 0;
   right: 0;
@@ -1047,14 +1015,12 @@ body {
   letter-spacing: 1px;
   color: var(--steal-alert-color, var(--ink));
   text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
-  /* Blinks while they're still choosing (a threat in progress), then holds steady once the
-     card is actually gone - the state change is itself information: "deciding" vs "done".
-     Bounded to 7 iterations (4.48s), NOT infinite: this state lasts as long as the thief
-     takes to pick a card, which the 20s turn clock caps but doesn't shorten, and content that
-     blinks for more than five seconds has to be stoppable (WCAG 2.2.2). Stopping on its own
-     satisfies that; the alert itself stays on screen afterwards, just steady. The keyframe
-     returns to full opacity at 100% so the resting state after the last iteration is the
-     legible one. */
+  /* Blinks while they're still choosing, then holds steady once the card is gone - the state
+     change is itself information: "deciding" vs "done". Bounded to 7 iterations (4.48s), NOT
+     infinite: this state lasts as long as the thief takes to pick, which the 20s turn clock
+     caps but doesn't shorten, and anything blinking for more than five seconds has to be
+     stoppable (WCAG 2.2.2). Stopping on its own satisfies that. The keyframe returns to full
+     opacity at 100%, so the resting state after the last iteration is the legible one. */
   animation: steal-alert-blink 640ms steps(2, end) 7;
 }
 
@@ -1075,8 +1041,8 @@ body {
 }
 
 /* A card crossing the board from the hand it was taken out of to the stack it now belongs to
-   (see StealTransfer.tsx). The ring is the destination player's color, so the answer to
-   "where is this going" travels with the card instead of only existing once it lands. */
+   (StealTransfer.tsx). The ring is the destination player's color, so "where is this going"
+   travels with the card instead of only existing once it lands. */
 .steal-transfer {
   outline: 3px solid var(--steal-transfer-ring, var(--ink));
   outline-offset: 2px;
@@ -1084,22 +1050,25 @@ body {
 }
 
 /* The card the thief has just taken, in the air and then held up (StealFlight.tsx). Ringed in
-   the 2's own pink - the card that bought this is lying face-up on the pile in exactly that
-   colour, so the two read as one action. Drawn on the outer flying element rather than either
-   face, so it doesn't rotate away with the flip. */
+   the 2's own pink, since the card that bought this is lying face-up on the pile in exactly
+   that color and the two should read as one action. Drawn on the outer flying element rather
+   than either face, so it doesn't rotate away with the flip. */
 .steal-flight {
   outline: 3px solid var(--card-steal);
   outline-offset: 3px;
 }
+
+/* ---------------------------------------------------------------------------
+   Card flip animation (DealAnimation.tsx / StealFlight.tsx)
+   --------------------------------------------------------------------------- */
 
 canvas {
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
 
-/* 3D flip reveal - each dealt card flies in showing its back, then rotates to its real face
-   partway through (see DealAnimation.tsx). Two backface-hidden faces stacked in a shared 3D
-   space read as a single card turning over, not a swap/crossfade. */
+/* Two backface-hidden faces stacked in a shared 3D space read as a single card turning over,
+   not a swap or crossfade. */
 .deal-animation__flipper {
   position: relative;
   width: 100%;
@@ -1125,22 +1094,23 @@ canvas {
   transform: rotateY(180deg);
 }
 
+/* ---------------------------------------------------------------------------
+   App shell and lobby
+   --------------------------------------------------------------------------- */
+
 .app-background {
-  /* z-index: -1 confirmed (empirically, in this project's own test tooling) to sometimes
-     composite as fully invisible rather than "behind everything" - not worth the risk twice
-     over (see PixelBlast's WebGL version, replaced by this Canvas2D one for a similar
-     reliability reason). z-index: 0 plus .app-content below explicitly stacked above it via
-     the same mechanism (a real positioned stacking order, not a negative escape hatch) is
-     the same visual result through a path that's actually been verified to render. */
+  /* z-index: -1 was confirmed to sometimes composite as fully invisible rather than "behind
+     everything". z-index: 0 here plus .app-content explicitly stacked above it is the same
+     visual result through a real positioned stacking order rather than a negative escape
+     hatch - a path that has actually been verified to render. */
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
   width: 100%;
   height: 100%;
-  /* Crossfades the visible/color prop changes (PixelDither.tsx) - opacity toggling on whose
-     turn it is, or the color shift as GameBoard's current player changes, should read as a
-     transition, not a hard cut. */
+  /* Crossfades PixelDither's visible/color prop changes - the opacity toggle on whose turn it
+     is, and the color shift as the current player changes, should read as transitions. */
   transition: opacity 300ms ease;
 }
 
@@ -1177,11 +1147,10 @@ canvas {
   }
 }
 
-/* Wraps whichever screen body is currently mounted (Lobby.tsx keys this div on screen.kind,
-   so React remounts it - and only it - on every real transition) - a plain settle, not a
-   slide from off-screen, matching the terminal's snappy/blocky motion vocabulary rather than
-   a soft consumer-app page transition. Repeats .lobby's own gap since this div is now the
-   single flex child carrying everything that used to sit directly in .lobby's column. */
+/* Wraps whichever screen body is mounted. Lobby.tsx keys this div on screen.kind, so React
+   remounts it - and only it, never the identity strip above - on every real transition. A
+   plain settle, not a slide from off-screen, matching the terminal's snappy motion. Repeats
+   .lobby's own gap since this div is the single flex child carrying everything. */
 .lobby__screen {
   display: flex;
   flex-direction: column;
@@ -1223,9 +1192,8 @@ canvas {
   color: var(--ink-dim);
 }
 
-/* Per-seat color pickers (PlayerSetupPicker.tsx's singleplayer Colors section) - the
-   waiting-room roster below is a separate, denser list (read-only, no slider per row), see
-   .lobby__roster. */
+/* Per-seat color pickers (PlayerSetupPicker's singleplayer setup). The waiting-room roster is
+   a separate, denser read-only list - see .lobby__roster. */
 .lobby__seats {
   display: flex;
   flex-direction: column;
@@ -1247,9 +1215,8 @@ canvas {
   color: var(--ink-dim);
 }
 
-/* Join-code + Host cluster (Lobby.tsx's 'menu' screen) - a <form> around just the code
-   input/submit, per accessibility review: Host/Singleplayer aren't part of "join a game"
-   semantically and shouldn't share a fieldset/group with it. */
+/* The join-code row is a <form> around the code input and submit only - Host and Singleplayer
+   aren't part of "join a game" semantically and shouldn't share a group with it. */
 .lobby__join-row {
   display: flex;
   align-items: flex-end;
@@ -1277,9 +1244,9 @@ canvas {
   width: 100%;
 }
 
-/* A beat more separation than the .lobby column's own uniform gap - Singleplayer is a
-   different path, not another item continuing the Multiplayer panel above it, and the extra
-   air says so before the eye even reads either label. */
+/* More separation than the column's uniform gap: Singleplayer is a different path, not another
+   item continuing the Multiplayer panel above it, and the extra air says so before the eye
+   reads either label. */
 .lobby__singleplayer-btn {
   margin-top: var(--space-xs);
 }
@@ -1288,8 +1255,8 @@ canvas {
   align-self: flex-start;
 }
 
-/* Ghost variant - Back needs to sit well below a primary Host/Start button in visual
-   weight (impeccable's "not every button primary" rule), not compete with it. */
+/* Ghost variant - Back sits well below a primary Host/Start button in visual weight rather
+   than competing with it. */
 .cp-button--ghost {
   background: transparent;
   color: var(--ink-dim);
@@ -1303,8 +1270,6 @@ canvas {
   box-shadow: none;
 }
 
-/* Room-code display + copy button (WaitingRoom.tsx) - a row, not the plain standalone code
-   block the old single-step OnlineLobby screen had room for. */
 .lobby__code-row {
   display: flex;
   align-items: stretch;
@@ -1316,9 +1281,9 @@ canvas {
   flex: 0 0 auto;
 }
 
-/* Sighted-user confirmation for the Copy button, positioned out of flow (position: relative
-   above) so it doesn't shove the row's own layout around when it appears - see the
-   role="status" paragraph just below it in WaitingRoom.tsx for the screen-reader side. */
+/* Sighted-user confirmation for Copy, positioned out of flow so it doesn't shove the row's
+   layout around when it appears. The screen-reader side is the role="status" paragraph just
+   below it in WaitingRoom.tsx. */
 .lobby__copy-feedback {
   position: absolute;
   right: 0;
@@ -1336,9 +1301,9 @@ canvas {
   transform: translateY(0);
 }
 
-/* Waiting-room player list - marble + name per row, denser than .lobby__seats since there's
-   no per-row slider here, just a read-out. Self-adjusting grid (impeccable's spatial
-   guidance): one column on a phone, more as the panel gets room, no breakpoint needed. */
+/* Waiting-room player list - marble plus name per row, denser than .lobby__seats since there
+   is no per-row slider. Self-adjusting grid: one column on a phone, more as the panel gets
+   room, no breakpoint needed. */
 .lobby__roster {
   list-style: none;
   margin: 0;
@@ -1356,9 +1321,8 @@ canvas {
   background: var(--bg-raised);
   border: 2px solid var(--bg-deep);
   min-width: 0;
-  /* Plays once on mount, per row - React keeps existing rows' keys stable as the roster
-     grows, so only the row for a just-joined seat actually mounts (and animates); it doesn't
-     replay on the rows already there. */
+  /* Plays once per row on mount. React keeps existing rows' keys stable as the roster grows,
+     so only a just-joined seat's row actually mounts and animates. */
   animation: lobby-screen-in 200ms var(--ease-out-quart) both;
 }
 
@@ -1373,8 +1337,11 @@ canvas {
   color: var(--ink-dim);
 }
 
-/* Persistent identity strip (PlayerIdentity.tsx) - name + color + marble preview, shown
-   once above whichever pregame screen is active. */
+/* ---------------------------------------------------------------------------
+   Identity strip, marble and color picker
+   --------------------------------------------------------------------------- */
+
+/* Name, color and marble preview, shown once above whichever pregame screen is active. */
 .identity-strip {
   width: 100%;
   padding: var(--space-sm) var(--space-md);
@@ -1420,10 +1387,9 @@ canvas {
   outline-offset: 2px;
 }
 
-/* DOM approximation of the Phaser marble sprite (see PlayerMarble.tsx) - a chamfered
-   square, not a plain circle, so it reads as "the same marble" as the board's own sprites.
-   color-mix (impeccable's modern-CSS-color guidance) derives the lighter facet tint
-   straight from --marble-color instead of a second hand-picked shade per swatch. */
+/* DOM approximation of the Phaser marble sprite (PlayerMarble.tsx) - a chamfered square, not a
+   circle, so it reads as "the same marble" as the board's own sprites. color-mix derives the
+   lighter facet tint straight from --marble-color instead of a second hand-picked shade. */
 .player-marble {
   --marble-size: 28px;
   --marble-color: #ffffff;
@@ -1450,8 +1416,7 @@ canvas {
 }
 
 /* Marble-as-disclosure-toggle (MarbleColorPicker.tsx) - one shared control everywhere a
-   player's own color gets set, replacing what used to be a separately-visible slider +
-   swatch + text label at each of those spots. */
+   player's color gets set, replacing a separately-visible slider, swatch and label at each. */
 .marble-picker {
   position: relative;
   display: inline-flex;
@@ -1491,15 +1456,15 @@ canvas {
   left: 0;
 }
 
-/* 'end' - marble sits at the right of its row (PlayerSetupPicker's per-seat rows), panel
-   opens leftward instead so it doesn't run off the right edge of a narrow viewport. */
+/* 'end' - marble sits at the right of its row (PlayerSetupPicker's per-seat rows), so the
+   panel opens leftward and can't run off the right edge of a narrow viewport. */
 .marble-picker--end .marble-picker__panel {
   right: 0;
 }
 
-/* A pastel hue-wheel gradient painted via the inline `background` style (see
-   ColorSlider.tsx) - -webkit-appearance/-moz-appearance strip the native track fill so
-   that gradient shows through instead of the browser's default track color. */
+/* The pastel hue-wheel gradient is painted via ColorSlider's inline `background`; the
+   appearance resets strip the native track fill so that gradient shows through instead of the
+   browser's default track color. */
 .color-slider__input {
   -webkit-appearance: none;
   appearance: none;
@@ -1547,8 +1512,8 @@ canvas {
 }
 
 .lobby__start {
-  /* More than the panel's own gap - the primary action earns a beat of arrival, not just
-     another step in the same tight rhythm as the fields/hints above it. */
+  /* More than the panel's own gap - the primary action earns a beat of arrival rather than
+     another step in the same tight rhythm as the fields above it. */
   margin-top: var(--space-sm);
   font-size: 1.1rem;
 }
@@ -1573,9 +1538,9 @@ canvas {
 .lobby__error {
   margin: 0;
   font-size: 0.8rem;
-  /* Not --player-red - that token measures ~4.5:1 on --bg-raised, right at (and by strict
-     calculation, just under) the WCAG AA 4.5:1 floor for this text's size. This lighter
-     tint clears it with real margin (~6.2:1). */
+  /* Not --player-red: that token sits right at (and by strict calculation just under) the WCAG
+     AA 4.5:1 floor for this text size. This lighter tint measures 7.92:1 against the
+     --bg-panel this actually renders on (it lives inside .cp-panel, not on --bg-raised). */
   color: #ff8a9c;
 }
 
@@ -1590,6 +1555,10 @@ canvas {
   background: var(--bg-raised);
   border: 3px solid var(--ink-dim);
 }
+
+/* ---------------------------------------------------------------------------
+   Win screen
+   --------------------------------------------------------------------------- */
 
 .win-screen {
   position: fixed;
@@ -1639,23 +1608,22 @@ canvas {
 .win-screen__actions {
   display: flex;
   gap: 12px;
-  /* Non-host players get the rematch hint here instead of a button (see WinScreen), and it
-     wraps to two lines in narrow/one-handed portrait next to Change Settings - without this
-     the two sat on one overflowing row. */
+  /* Non-host players get the rematch hint here instead of a button, and it wraps to two lines
+     in narrow portrait next to Change Settings - without this the two sat on one overflowing
+     row. */
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
 }
 
-/* Stands in for the Play Again button when the viewer isn't the host (see WinScreen) -
-   deliberately NOT button-shaped: it's a status line, and giving it any of .cp-button's
-   look would invite taps on something inert. --ink-dim over .cp-panel's --bg-panel is
-   6.2:1 (measured against the live computed colors), so it stays a real readable line
-   rather than decorative filler. */
+/* Stands in for Play Again when the viewer isn't the host. Deliberately NOT button-shaped:
+   it's a status line, and any of .cp-button's look would invite taps on something inert.
+   --ink-dim over .cp-panel's --bg-panel measures 6.2:1, so it stays a readable line rather
+   than decorative filler. */
 .win-screen__hint {
   margin: 0;
-  /* Matches .cp-button's own min-height so the row keeps the same height whether the viewer
-     is the host (button) or not (this), instead of the panel resizing per player. */
+  /* Matches .cp-button's min-height so the row keeps the same height whether the viewer is
+     the host (button) or not (this), instead of the panel resizing per player. */
   min-height: var(--target-min-touch);
   display: flex;
   align-items: center;
@@ -1667,34 +1635,34 @@ canvas {
 }
 
 /* ---------------------------------------------------------------------------
-   Emote chat (online only) - EmotePicker.tsx / EmoteFeed.tsx
+   Emote HUD (online only) - EmotePicker.tsx / EmoteFeed.tsx
    --------------------------------------------------------------------------- */
 
-/* Phaser's canvas mount, split out of the board container so `role="img"` can scope to the
-   canvas alone instead of pruning every DOM control layered over it - see GameBoard.tsx.
-   Absolutely filling the container keeps its box identical to what Phaser measured before,
-   so the Scale Manager sees no change. */
+/* Phaser's canvas mount, split out of the board container so role="img" scopes to the canvas
+   alone instead of pruning every DOM control layered over it (see GameBoard.tsx). Filling the
+   container absolutely keeps its box identical to what Phaser measured, so the Scale Manager
+   sees no change. */
 .board-canvas {
   position: absolute;
   inset: 0;
 }
 
 /* Kaomoji are NOT set in Departure Mono. That face covers exactly one of the ten (see
-   packages/shared/src/emotes.ts) - it has no kana, CJK, Mongolian or Samaritan glyphs - so
-   leaving them on the body font makes the browser fall back per MISSING GLYPH, drawing
-   `¯\_(ツ)_/¯` with its macrons and parens in the pixel face and its ツ in whatever the
-   system offers, at a different width, weight and baseline. One face for the whole kaomoji
-   is the lesser evil: the pixel chrome around it still carries the arcade voice, and these
-   are quoted character art rather than app text. Sans-serif, not monospace, because the
-   monospace defaults on most systems have thinner CJK/kana coverage than the UI face. */
+   shared/src/emotes.ts) - no kana, CJK, Mongolian or Samaritan glyphs - so leaving them on the
+   body font makes the browser fall back per MISSING GLYPH, drawing `¯\_(ツ)_/¯` with its
+   macrons and parens in the pixel face and its ツ in whatever the system offers, at a different
+   width, weight and baseline. One face for the whole kaomoji is the lesser evil: the pixel
+   chrome around it still carries the arcade voice, and these are quoted character art rather
+   than app text. sans-serif rather than monospace, because monospace defaults on most systems
+   have thinner CJK/kana coverage than the UI face. */
 .emote-glyph {
   font-family: system-ui, -apple-system, 'Segoe UI Symbol', 'Apple Symbols', 'Noto Sans Symbols 2', sans-serif;
   font-weight: 400;
   letter-spacing: 0;
   white-space: nowrap;
-  /* Kaomoji mix half-width and full-width glyphs, so line boxes vary in height between one
-     emote and the next - a fixed line-height keeps every row in the picker grid and every
-     line in the feed the same height regardless of which face is in it. */
+  /* Kaomoji mix half-width and full-width glyphs, so line boxes vary in height from one emote
+     to the next. A fixed line-height keeps every row in the picker grid and every line in the
+     feed the same height regardless of which face is in it. */
   line-height: 1.15;
 }
 
@@ -1706,17 +1674,18 @@ canvas {
   min-width: var(--target-min-touch);
   padding: 0;
   font-size: 15px;
-  /* Sits over the board's own live area - see .board-status__pass for the same note. */
+  /* Sits over the board's live area - same reason as .board-status__pass. */
   touch-action: manipulation;
-  /* No z-index on purpose - see GameBoard.tsx, where this whole HUD is placed before the
-     game overlays in DOM order so it stacks behind them. Any positive z-index here would
-     lift it back over .board-overlay, which has none of its own. */
+  /* No z-index on purpose. GameBoard.tsx places this whole HUD before the game overlays in DOM
+     order so it stacks behind them; any positive z-index here would lift it back over
+     .board-overlay, which has none of its own - which is exactly how the Joker rank picker
+     once ended up trapped underneath this button. */
 }
 
-/* Same additive-transform fix .cp-button.board-status__pass needs, and for the same reason:
-   .cp-button:active's own translate(3px, 3px) REPLACES this button's centering transform
-   rather than adding to it, which snaps it half its own width out from under the finger
-   between touchstart and the hit-test at touchend. */
+/* The same additive-transform fix .cp-button.board-status__pass needs, for the same reason:
+   .cp-button:active's translate REPLACES this button's centering rather than adding to it,
+   snapping it half its own width out from under the finger between touchstart and the
+   hit-test at touchend. */
 .emote-picker__toggle:active {
   transform: translate(calc(-50% + 3px), calc(-50% + 3px));
 }
@@ -1725,7 +1694,7 @@ canvas {
   position: absolute;
   /* Opens UPWARD out of the toggle, into the gap between the ring and the hand panel, so it
      never fully covers a focused move button below it (WCAG 2.4.11) and never prints through
-     the turn label - see --board-bottom-clearance's own note. */
+     the turn label - see --board-bottom-clearance. */
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
@@ -1737,10 +1706,10 @@ canvas {
 
 .emote-picker__grid {
   display: grid;
-  /* Two columns rather than one 10-row column: the tall version covered most of the board on
-     a phone, which is the one screen where "doesn't get in the way" actually matters. DOM
-     order is plain reading order, so the tab sequence matches what's on screen and needs no
-     roving tabindex or arrow-key handling. */
+  /* Two columns rather than one 10-row column: the tall version covered most of the board on a
+     phone, the one screen where "doesn't get in the way" actually matters. DOM order is plain
+     reading order, so the tab sequence matches what's on screen and needs no roving tabindex
+     or arrow-key handling. */
   grid-template-columns: 1fr 1fr;
   gap: var(--space-2xs);
   margin: 0;
@@ -1750,8 +1719,8 @@ canvas {
 
 .emote-picker__option {
   width: 100%;
-  /* Below .cp-button's own 44px, but above WCAG 2.5.8's 24px floor - ten full-size targets
-     stacked two-wide made the panel taller than the board area it's supposed to stay out of.
+  /* Below .cp-button's own 44px but above WCAG 2.5.8's 24px floor - ten full-size targets
+     stacked two-wide made the panel taller than the board area it is supposed to stay out of.
      The grid gap above is the spacing that compensates. */
   min-height: 34px;
   padding: var(--space-2xs);
@@ -1774,39 +1743,37 @@ canvas {
   /* Oldest at the top, newest at the bottom against the pile, without reversing the array -
      the feed is stored oldest-first so the fade can key off distance from the newest. */
   flex-direction: column-reverse;
-  /* Stretch, not flex-end - the chips take the column's full fixed width (see FEED_WIDTH in
-     EmoteFeed.tsx) so their left borders line up as one rail instead of each chip shrinking
+  /* Stretch, not flex-end: the chips take the column's full fixed width (FEED_WIDTH in
+     EmoteFeed.tsx) so their left borders line up as one rail, instead of each chip shrinking
      to its own text and staggering its bar. */
   align-items: stretch;
   gap: var(--space-2xs);
-  /* Sits directly over live track squares. Without this it would swallow taps meant for the
-     marbles underneath - the same trap .board-overlay documents at the top of this file. */
+  /* Sits directly over live track squares - without this it would swallow taps meant for the
+     marbles underneath, the same trap .board-overlay documents. */
   pointer-events: none;
 }
 
 .emote-feed__line {
   /* Always two stacked rows - name over kaomoji - never a wrap that depends on how wide the
-     particular kaomoji is. The earlier version shared one line when it fit and folded when it
-     didn't, which meant `(°_°)` (31px) sat on one row while `╾━╤デ╦︻ (•_- )` (103px) took two,
-     so the colour bar was a different height on every message and the names landed at
-     different offsets down the column. One fixed shape per message is what makes the bars
-     read as a single aligned rail. */
+     particular kaomoji is. Sharing one line when it fit meant `(°_°)` (31px) sat on one row
+     while `╾━╤デ╦︻ (•_- )` (103px) took two, so the color bar was a different height on every
+     message and the names landed at different offsets down the column. One fixed shape per
+     message is what makes the bars read as a single aligned rail. */
   display: flex;
   flex-direction: column;
-  /* Left-aligned against the colour bar, so the gap between bar and text is the same on every
-     message. Right-aligning here would leave a short emote like `(°_°)` floating a long way
-     from its own bar. */
+  /* Left-aligned against the color bar, so the gap between bar and text is the same on every
+     message. Right-aligning would leave a short emote floating a long way from its own bar. */
   align-items: flex-start;
   gap: 0;
   margin: 0;
   padding: 3px var(--space-xs);
   max-width: 100%;
   color: var(--emote-color);
-  /* Opaque chip, not a bare text overlay: the line sits over the board canvas and whatever
-     the Phaser layer happens to be drawing there, and text with no determinate backdrop has
-     no measurable contrast ratio. The chip is also what carries the visible fade - it holds
-     no text, so it's free to drop all the way out, which is what lets the text itself ramp
-     only 1 -> 0.7 and stay above 4.5:1 (see game/color.ts's hueToTextCss). */
+  /* An opaque chip, not a bare text overlay: the line sits over the board canvas and whatever
+     Phaser happens to be drawing there, and text with no determinate backdrop has no
+     measurable contrast ratio. The chip also carries the visible fade - it holds no text, so
+     it is free to drop all the way out, which is what lets the text itself ramp only 1 -> 0.7
+     and stay above 4.5:1 (see game/color.ts's hueToTextCss). */
   background: rgba(0, 0, 0, calc(0.82 * var(--emote-alpha)));
   border-left: 3px solid var(--emote-color);
   opacity: var(--emote-alpha);
@@ -1819,13 +1786,13 @@ canvas {
   letter-spacing: 0.5px;
   text-transform: uppercase;
   /* Display names are user-authored and this column is only ~120px wide on a phone. Truncate
-     rather than wrap - the full name is still spoken in full through the log region. */
+     rather than wrap - the full name is still spoken through the log region. */
   max-width: 9ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: none;
-  /* Explicit box height, matching line-height, for the same reason the glyph below has one. */
+  /* An explicit box height matching line-height, for the same reason the glyph below has one. */
   line-height: 1.3;
   height: 1.3em;
 }
@@ -1837,27 +1804,25 @@ canvas {
   font-size: clamp(12px, 3.4vw, 15px);
   /* An explicit height, not just a line-height, because a line box grows to fit its tallest
      inline content: the full-width CJK and Mongolian glyphs in `╾━╤デ╦︻ (•_- )` report far
-     larger ascent/descent than the Latin ones in `(°_°)`, so identical font-sizes still
-     produced boxes ~16px apart in height (measured live: 39.8px vs 24px). Fixing the height in
-     em keeps every message the same size at a given viewport - a taller glyph then paints
-     slightly outside its box (overflow stays visible) instead of shoving the row open and
-     knocking the whole column out of alignment. */
+     larger ascent and descent than the Latin ones in `(°_°)`, so identical font-sizes still
+     produced boxes ~16px apart in height (39.8px vs 24px, measured live). Fixing the height in
+     em keeps every message the same size at a given viewport; a taller glyph then paints
+     slightly outside its box instead of shoving the row open and knocking the column out of
+     alignment. */
   line-height: 1.4;
   height: 1.4em;
 }
 
 /* Transform only - deliberately NOT a fade-in, and deliberately no fill-mode. An earlier
-   version opened at `opacity: 0` with `animation-fill-mode: both`, which makes the message's
+   version opened at opacity: 0 with animation-fill-mode: both, which makes a message's
    visibility depend on the animation actually ticking: an animation parked at currentTime 0
    keeps applying its 0% frame, so anywhere frames stop arriving (a backgrounded or throttled
-   tab - which is exactly what the browser automation pane is, and what PhaserGame.ts already
-   documents having been bitten by) every emote stays fully transparent for its whole 6.5s
-   life and the feed silently shows nothing. Confirmed live: getAnimations() reported
-   `running` with currentTime stuck at 0 across a 3s probe while opacity read 0. Animating
-   only the offset means a frozen animation costs 6px of position and nothing else, and the
-   resting opacity stays the base rule's own value in every phase. The reduced-motion
-   override further up this file collapses the duration to 0.01ms, which now has nothing to
-   settle wrongly onto. */
+   tab) every emote stays fully transparent for its whole 6.5s life and the feed silently shows
+   nothing. Confirmed live: getAnimations() reported `running` with currentTime stuck at 0
+   across a 3s probe while opacity read 0. Animating only the offset means a frozen animation
+   costs 6px of position and nothing else, and the resting opacity stays the base rule's own
+   value in every phase. The reduced-motion override above collapses the duration to 0.01ms,
+   which now has nothing to settle wrongly onto. */
 @keyframes emote-rise {
   from {
     transform: translateY(6px);

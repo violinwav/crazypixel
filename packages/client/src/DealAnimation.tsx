@@ -7,17 +7,22 @@ import { CardRankIndices } from './CardRankIndices';
 const FLIGHT_MS = 320;
 const FLIP_MS = 260;
 const STAGGER_MS = 100;
-// .hand-panel's own horizontal padding (theme.css) - handCardWidthFor (cardArt.ts) already
-// factors this into the card width itself, but the row-centering math below also needs it
-// directly to know where the padded content box starts.
+// One tick to let the browser paint each card at rest before its transform flips - same
+// sequencing, and the same setTimeout-over-rAF reason, as FlyingCard.
+const START_DELAY_MS = 20;
+// A little slack after the last flip before the real hand takes over.
+const HANDOFF_MS = 80;
+// .hand-panel's own horizontal padding and .hand-panel__cards' gap (theme.css).
+// handCardWidthFor already factors the padding into the card width, but the row-centering
+// math below also needs it directly to know where the padded content box starts.
 const HAND_PANEL_PADDING_X = 14 * 2;
 const CARD_GAP = 8;
 
-/** Mirrors .playing-card.hand-panel__card's own responsive width formula in theme.css
- * exactly, via the shared handCardWidthFor (cardArt.ts) - using the real measured hand-panel
- * width (plan.to.width, from GameView's getBoundingClientRect - the deck has no actual
- * hand-card DOM element to measure yet, this one doesn't exist until the deal completes)
- * rather than approximating it from the viewport. */
+/**
+ * The card size the real hand is about to render at, from the measured hand-panel width. The
+ * deck has no hand-card DOM element to read yet - one doesn't exist until the deal completes -
+ * so this goes through the shared handCardWidthFor rather than approximating off the viewport.
+ */
 function computeCardSize(containerWidth: number) {
   const width = handCardWidthFor(containerWidth);
   return { width, height: width * (CARD_HEIGHT / CARD_WIDTH) };
@@ -25,12 +30,11 @@ function computeCardSize(containerWidth: number) {
 
 export interface DealPlan {
   /** The actual dealt hand, in order - each flying card reveals its own real face partway
-   * through its flight (see FLIP_MS below), not just a back that vanishes into a hand that
-   * was always there. */
+   * through its flight, rather than a back vanishing into a hand that was always there. */
   cards: Card[];
   from: { x: number; y: number };
-  /** Hand panel's bounding box - cards fan out across its width so they land roughly where
-   * the real hand is about to appear, not just in one pile. */
+  /** The hand panel's bounding box. Cards fan across its width so they land roughly where the
+   * real hand is about to appear, not in one pile. */
   to: { x: number; y: number; width: number };
 }
 
@@ -41,14 +45,15 @@ interface Props {
 
 type CardStage = 'atDeck' | 'flying' | 'revealed';
 
-// Card backs fly from the draw pile to roughly where each hand slot will sit, one at a time,
-// flipping to their real face partway through the flight - the "real" deal that already
-// happened in state is instant, this is purely the table catching up visually to a moment
-// that actually matters (a fresh round), not replayed every time a turn merely switches to a
-// player who was already dealt to earlier this round (see GameView.tsx's round-index guard).
-// Same "mount at rest, flip a flag after a tick, let CSS transition the rest" technique as
-// FlyingCard.tsx - requestAnimationFrame is unreliable in this environment, setTimeout isn't
-// - just staggered per card instead of firing once.
+/**
+ * Card backs flying from the draw pile to roughly where each hand slot will sit, flipping to
+ * their real face partway through. The "real" deal already happened in state; this is the table
+ * catching up visually to a moment that matters (a fresh round), and it is not replayed when a
+ * turn merely switches to a player already dealt to this round - see GameBoard's round guard.
+ *
+ * aria-hidden throughout: the hand itself is the accessible surface, and this is a transient
+ * decoration over it.
+ */
 export function DealAnimation({ plan, onDone }: Props) {
   const [stages, setStages] = useState<CardStage[]>(() => Array(plan.cards.length).fill('atDeck'));
 
@@ -56,7 +61,7 @@ export function DealAnimation({ plan, onDone }: Props) {
     const setStage = (i: number, stage: CardStage) =>
       setStages((prev) => prev.map((v, j) => (j === i ? stage : v)));
     const timers = plan.cards.flatMap((_, i) => {
-      const flyAt = i * STAGGER_MS + 20;
+      const flyAt = i * STAGGER_MS + START_DELAY_MS;
       const revealAt = flyAt + FLIGHT_MS;
       return [
         setTimeout(() => setStage(i, 'flying'), flyAt),
@@ -65,24 +70,23 @@ export function DealAnimation({ plan, onDone }: Props) {
     });
     const doneTimer = setTimeout(
       onDone,
-      Math.max(0, plan.cards.length - 1) * STAGGER_MS + FLIGHT_MS + FLIP_MS + 80,
+      Math.max(0, plan.cards.length - 1) * STAGGER_MS + FLIGHT_MS + FLIP_MS + HANDOFF_MS,
     );
     return () => {
       timers.forEach(clearTimeout);
       clearTimeout(doneTimer);
     };
-    // Runs once for this plan's lifetime - a fresh DealAnimation instance is mounted per
-    // deal (see GameView.tsx), not reused, so re-running on prop change would double-fire.
+    // Runs once for this plan's lifetime - a fresh instance is mounted per deal, never reused,
+    // so re-running on a prop change would double-fire.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (plan.cards.length === 0) return null;
   const { width: cardW, height: cardH } = computeCardSize(plan.to.width);
-  // Matches .hand-panel__cards' own layout exactly (fixed-width slots, justify-content:
-  // center) instead of dividing the full panel width evenly by however many cards are in
-  // this hand - that spread short hands (e.g. 2 cards) out near the panel's edges, then
-  // snapped them inward the instant the real (centered, tightly-packed) hand took over,
-  // a visible jump right as the deal animation handed off (confirmed live).
+  // Matches .hand-panel__cards' own layout exactly - fixed-width slots, centered - rather than
+  // dividing the panel width evenly by however many cards are in this hand. The latter spread a
+  // short hand out toward the panel's edges, then snapped it inward the instant the real,
+  // tightly-packed hand took over: a visible jump right at the handoff.
   const rowWidth = plan.cards.length * cardW + Math.max(0, plan.cards.length - 1) * CARD_GAP;
   const rowLeft = plan.to.x + (plan.to.width - HAND_PANEL_PADDING_X - rowWidth) / 2 + HAND_PANEL_PADDING_X / 2;
 

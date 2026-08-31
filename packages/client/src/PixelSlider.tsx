@@ -8,11 +8,12 @@ interface Props {
   onChange: (value: number) => void;
 }
 
-/** A real <input type="range"> (correct keyboard/AT semantics, value announcements) with its
- * native track hidden and a row of blocky pixel notches drawn underneath in its place - the
- * input stays interactive (opacity 0, not display:none) so dragging/arrow keys/focus all
- * still work, the notches are purely decorative (aria-hidden) and stay in sync since both
- * read off the same `value` prop. */
+/**
+ * A real <input type="range"> - correct keyboard semantics and value announcements - with its
+ * native track hidden and a row of blocky pixel notches drawn underneath in its place. The
+ * input stays interactive (opacity 0, not display:none) so dragging, arrow keys and focus all
+ * still work; the notches are decorative and stay in sync because both read the same `value`.
+ */
 export function PixelSlider({ label, min, max, value, onChange }: Props) {
   const id = useId();
   const notches = Array.from({ length: max - min + 1 }, (_, i) => min + i);

@@ -1,37 +1,43 @@
+// Phase two of move selection: where a chosen piece can GO. figureTargets.ts is phase one
+// (which piece acts). Reuses the engine's own planMovement rather than a simplified
+// re-derivation, which used to not know about home-stretch entry and highlighted the wrong
+// square for a move that crossed into home.
+
 import { moveCaptureIndices, planMovement, startIndexFor, trackLengthFor } from '@crazypixel/shared';
 import type { GameState, Marble, Move } from '@crazypixel/shared';
-import { trackPoint, kennelSlotPoint, homeSlotPoint } from './boardLayout';
+import { homeSlotPoint, trackPoint } from './boardLayout';
 import type { BoardGeometry, Point } from './boardLayout';
 
 export interface MoveTarget {
   move: Move;
-  /** The clickable point - the destination for a walked move, so forward/backward (e.g.
-   * the 4 card) land on different, separately-clickable squares instead of overlapping at
-   * the marble's current position. */
+  /**
+   * The clickable point - a walked move's destination, so forward and backward (the 4 card)
+   * land on separately-clickable squares instead of overlapping at the marble's position.
+   */
   point: Point;
-  /** Full trail of squares walked, in order, for a "highlight the slots walked" visual -
-   * empty for moves that aren't a track walk (start, swap, force-draw). Includes the
-   * home-stretch slot as the final point when the move enters home. */
+  /**
+   * Every square walked, in order, for the "highlight the path" visual. Empty for moves that
+   * aren't a track walk (start, swap, force-draw). Includes the home-stretch slot as the
+   * final point when the move enters home.
+   */
   path: Point[];
   /** Parallel to `path`: does this square hold a marble the move sends home? */
   captured: boolean[];
-  /** Whether the landing square itself is a capture - i.e. whether the tap target (the ring
-   * at the end of the path, not a path dot) should read as a kill. */
+  /** Whether the landing square itself is a capture, i.e. should the tap target read red. */
   capturesTarget: boolean;
 }
 
 interface Resolved {
   point: Point;
   path: Point[];
-  /** Track index behind each `path` point, -1 for a home-stretch slot (never capturable -
-   * a home stretch is private to its owner). Kept alongside the pixel points so capture
-   * squares, which the engine reports as track indices, can be matched back to them. */
+  /**
+   * The track index behind each `path` point, -1 for a home-stretch slot (never capturable).
+   * Kept alongside the pixel points so capture squares, which the engine reports as track
+   * indices, can be matched back to them.
+   */
   pathIndices: number[];
 }
 
-/** Reuses the engine's own planMovement (see GameEngine.ts) rather than a second,
- * simplified path re-derivation - that duplicate used to not know about home-stretch
- * entry, so a move that actually crossed into home would highlight a stale/wrong square. */
 function walkPath(state: GameState, marble: Marble, steps: number, geo: BoardGeometry): Resolved | null {
   const plan = planMovement(state, marble, steps);
   if (!plan.legal) return null;
@@ -46,10 +52,9 @@ function walkPath(state: GameState, marble: Marble, steps: number, geo: BoardGeo
 }
 
 /**
- * Where a legal move should be visualized on the board, so selecting a card can highlight
- * real positions instead of listing moves as sentences. Most move kinds map cleanly to one
- * board position (a marble or a kennel cluster); splitSeven's genuinely multi-marble
- * combinations don't, so those come back with no target - see resolveMoveTargets below.
+ * Where one legal move should be visualized. Most move kinds map cleanly to a single board
+ * position; the ones that don't come back null and surface as text buttons instead - see
+ * resolveMoveTargets' `unresolved`.
  */
 function resolveOne(state: GameState, move: Move, geo: BoardGeometry): Resolved | null {
   switch (move.kind) {
@@ -68,14 +73,9 @@ function resolveOne(state: GameState, move: Move, geo: BoardGeometry): Resolved 
       const point = trackPoint(target.location.index, trackLengthFor(state.config), geo);
       return { point, path: [], pathIndices: [] }; // a swap isn't a track walk
     }
-    // forceDraw is never resolved to a single board point - see StealCardOverlay.tsx,
-    // which BoardOverlay always routes it through instead (a blind hand-position pick has
-    // no board position to highlight, and enumerating one legal move per hand slot means
-    // the generic fallback list would otherwise show a pile of near-duplicate buttons).
     case 'splitSeven':
-      // Only the common "one marble takes all 7" case gets a single highlightable point -
-      // a genuine multi-marble split has no single board position that represents it (see
-      // the dedicated step-allocator UI for that case instead).
+      // Only "one marble takes all 7" has a single highlightable point; a genuine
+      // multi-marble split goes to SevenSplitOverlay's step allocator instead.
       if (move.steps.length === 1) {
         const marble = state.marbles.find((m) => m.id === move.steps[0].marbleId);
         return marble ? walkPath(state, marble, move.steps[0].steps, geo) : null;
@@ -84,6 +84,9 @@ function resolveOne(state: GameState, move: Move, geo: BoardGeometry): Resolved 
     case 'copyLastCard':
     case 'wildAs':
       return resolveOne(state, move.innerMove, geo);
+    // forceDraw never resolves to a board point - BoardOverlay routes it through
+    // StealCardOverlay, since a blind hand-position pick has no board position and one legal
+    // move per hand slot would otherwise render a pile of near-duplicate buttons.
     default:
       return null;
   }

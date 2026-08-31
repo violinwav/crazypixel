@@ -1,3 +1,6 @@
+// Constructs the Phaser game and exposes a small imperative bridge to it. React never talks
+// to TableScene directly; it pushes state through here.
+
 import Phaser from 'phaser';
 import type { GameState, PlayerId } from '@crazypixel/shared';
 import { PALETTE } from './theme';
@@ -15,6 +18,17 @@ export interface PhaserBridge {
 const SIZE_POLL_INTERVAL_MS = 50;
 const MAX_SIZE_POLL_ATTEMPTS = 60; // 3s worst case - generous for any real layout
 
+/**
+ * The flex-sized parent is frequently still 0x0 at construction time, and TableScene.create()
+ * runs against whatever size it finds then. This just guarantees *a* resize happens once real
+ * dimensions exist; TableScene redraws everything on the Scale Manager's 'resize' event.
+ *
+ * setTimeout rather than requestAnimationFrame, which is throttled in backgrounded or
+ * unfocused tabs - a fixed frame count sometimes measured before layout settled and sometimes
+ * long after. ResizeObserver's "fires once immediately" behavior was unreliable too: that
+ * first callback can itself land before layout settles, and it only fires again on a change,
+ * so if the real size arrives without a further change to report there is no second chance.
+ */
 function pollForRealSize(game: Phaser.Game, parent: HTMLElement, attemptsLeft: number) {
   const { width, height } = parent.getBoundingClientRect();
   if (width > 0 && height > 0) {
@@ -38,34 +52,13 @@ export function createPhaserGame(parent: HTMLElement): PhaserBridge {
     scene: [TableScene],
   });
 
-  // The flex-sized parent div is frequently still 0x0 at construction time (before the
-  // browser finishes laying out the flex tree), and TableScene.create() runs against
-  // whatever size it finds then - a later resize() call doesn't retroactively fix positions
-  // a scene already computed against 0x0, which is why TableScene also listens for the
-  // Scale Manager's 'resize' event and redraws everything (see that file). This just needs
-  // to guarantee *a* resize actually happens once real dimensions exist.
-  //
-  // requestAnimationFrame was tried first and was unreliable here - rAF gets throttled in
-  // backgrounded/non-focused tabs (which an automated browser pane often is from the
-  // browser's own perspective), so a fixed frame count sometimes measured before layout
-  // settled and sometimes long after. ResizeObserver's documented "fires once immediately
-  // with the current size" behavior was also unreliable in testing, most likely because
-  // that first callback can itself land before layout has settled - and since it only
-  // fires again on a *change*, if the real size is reached without a further change to
-  // report, it never gets a second chance. setTimeout polling doesn't depend on either of
-  // those timing assumptions.
   pollForRealSize(game, parent, MAX_SIZE_POLL_ATTEMPTS);
 
-  // Backstop for *later* real resizes (window resize, orientation change). Deliberately
-  // setParentSize(), not resize() - in RESIZE scale mode, ScaleManager's own refresh() cycle
-  // (which Phaser's *own* window resize/orientationchange listeners also trigger, same as
-  // this observer) re-derives canvas size from its internally cached parentSize, not from
-  // whatever resize()'s arguments were (confirmed in ScaleManager's own source -
-  // updateScale()'s RESIZE-mode branch reads this.parentSize unconditionally). resize()
-  // still visibly "works" in the moment it's called, but a subsequent refresh triggered by
-  // anything else - Phaser's own listeners included - can silently re-derive from the stale
-  // parentSize and undo it. setParentSize() updates that cache directly, so it stays correct
-  // through any later refresh, not just this one call.
+  // Backstop for later real resizes (window resize, orientation change). setParentSize, not
+  // resize: in RESIZE scale mode, ScaleManager's refresh() cycle - which Phaser's own resize
+  // listeners also trigger - re-derives canvas size from its cached parentSize, not from
+  // resize()'s arguments. resize() appears to work in the moment, then any later refresh can
+  // silently re-derive from the stale cache and undo it. setParentSize updates that cache.
   const resizeObserver = new ResizeObserver(() => {
     const { width, height } = parent.getBoundingClientRect();
     if (width > 0 && height > 0) game.scale.setParentSize(width, height);
@@ -73,23 +66,22 @@ export function createPhaserGame(parent: HTMLElement): PhaserBridge {
   resizeObserver.observe(parent);
   game.events.once('destroy', () => resizeObserver.disconnect());
 
-  // React only calls setGameState when its state reference actually changes - on mount,
-  // that's a single call carrying the initial state. If `game.scene.getScene('TableScene')`
-  // doesn't resolve yet at that exact moment (scene registration isn't instant even though
-  // the Game constructor above looks synchronous), that one call silently no-ops via the
-  // optional chain below and is never retried, since nothing about the game state changes
-  // again until a move is actually played - the board would stay empty indefinitely. Keeping
-  // the latest state here and re-pushing it once Phaser's own READY event fires closes that
-  // gap regardless of exactly when scene registration completes.
+  // React only calls the setters when its own state reference changes - on mount that's a
+  // single call carrying the initial state. If the scene isn't registered at that exact
+  // moment (registration isn't instant despite the Game constructor looking synchronous),
+  // that one call would no-op and never be retried, since nothing changes again until a move
+  // is played, leaving the board empty indefinitely. Holding the latest values here and
+  // re-pushing on Phaser's READY event closes that gap.
   let latestState: GameState | null = null;
   let latestPlan: TurnAnimation = EMPTY_TURN_ANIMATION;
   let latestColors: number[] | null = null;
   let latestViewerSeat: PlayerId | null = null;
+
   const pushState = () => {
     const scene = game.scene.getScene('TableScene') as TableScene | null;
     if (!scene) return;
     if (latestColors) scene.setColorAssignment(latestColors);
-    // Before setGameState, which is what actually triggers the re-layout that reads it.
+    // Before setGameState, which triggers the re-layout that reads it.
     if (latestViewerSeat !== null) scene.setViewerSeat(latestViewerSeat);
     if (latestState) scene.setGameState(latestState, latestPlan);
   };

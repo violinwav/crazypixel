@@ -1,3 +1,6 @@
+// The shared data model. Every package reads and writes these shapes; the rules that
+// interpret them live in GameEngine.ts.
+
 export type PlayerId = 0 | 1 | 2 | 3 | 4 | 5;
 
 export type Suit = 'spades' | 'hearts' | 'diamonds' | 'clubs';
@@ -15,8 +18,10 @@ export type Zone = 'kennel' | 'track' | 'home';
 
 export interface MarbleLocation {
   zone: Zone;
-  /** kennel: 0-3 slot. track: global index, range depends on player count (ARM_LENGTH *
-   * playerCount). home: 0-(HOME_STRETCH_LENGTH-1) home-stretch slot. */
+  /**
+   * kennel: 0-3 slot. track: global index, 0 to (ARM_LENGTH * playerCount - 1).
+   * home: 0 to (HOME_STRETCH_LENGTH - 1) home-stretch slot.
+   */
   index: number;
 }
 
@@ -24,12 +29,13 @@ export interface Marble {
   id: string;
   owner: PlayerId;
   location: MarbleLocation;
-  /** Has this marble, since it was last sent to the kennel, ever landed exactly on its own
-   * start square (via completing a forward lap, or the backward-4 house rule)? That's what
-   * actually grants "the right to enter home" a real board game gives you there - see
-   * planMovement's atEntrance check in GameEngine.ts. A marble freshly placed by
-   * startMarble sits on that same square with this still false; only a move that lands it
-   * there counts. */
+  /**
+   * Has this marble landed exactly on its own start square since it was last kenneled -
+   * by completing a forward lap, or via the backward-4 house rule? That is what grants the
+   * right to enter home (see planMovement's atEntrance check). A marble freshly placed by
+   * startMarble sits on the same square with this still false: only a move that *lands*
+   * there counts.
+   */
   hasLapped: boolean;
 }
 
@@ -38,11 +44,12 @@ export type GamePhase = 'dealing' | 'cardPass' | 'playing' | 'roundEnd' | 'gameE
 export type GameMode = 'ffa' | 'teams';
 
 export interface GameConfig {
-  /** 3 and 5 are ffa-only - odd counts have no symmetric partner to pair with (see partnerOf
-   * in constants.ts), enforced client-side (PlayerSetupPicker.tsx locks Partners out for
-   * them) and server-side (GameRoom.ts's handleStartGame). 5 only ever arises from an
-   * online lobby's actual join count - local/singleplayer setup still only offers 2/3/4/6
-   * (PlayerSetupPicker.PLAYER_COUNTS), same as before. */
+  /**
+   * 3 and 5 are ffa-only - odd counts have no symmetric partner to pair with (see
+   * partnerOf). Enforced client-side (PlayerSetupPicker.tsx) and server-side
+   * (GameRoom.handleStartGame). 5 only ever arises from an online lobby's actual join
+   * count; local setup offers 2/3/4/6.
+   */
   playerCount: 2 | 3 | 4 | 5 | 6;
   mode: GameMode;
 }
@@ -50,22 +57,25 @@ export interface GameConfig {
 export interface GameState {
   config: GameConfig;
   marbles: Marble[];
-  /** Always all 6 slots allocated regardless of config.playerCount - simpler than a
-   * partial/sparse record, and inactive slots just stay empty arrays, never iterated. */
+  /**
+   * Always all 6 slots regardless of config.playerCount - simpler than a sparse record;
+   * inactive slots stay empty arrays and are never iterated.
+   */
   hands: Record<PlayerId, Card[]>;
   drawPile: Card[];
   discardPile: Card[];
   lastPlayedCard: Card | null;
   lastPlayedBy: PlayerId | null;
   roundIndex: number;
-  /** Who dealt the current round. Rotates one seat per deal; the round's first turn goes to
-   * the seat after this one (see advanceTurn), so the opening seat walks round the table
-   * across rounds instead of following on from whoever happened to play last. */
+  /**
+   * Who dealt the current round. Rotates one seat per deal, and the round's first turn goes
+   * to the seat after this one (see advanceTurn), so the opening seat walks round the table
+   * instead of following on from whoever happened to play last.
+   */
   dealerIndex: PlayerId;
   currentPlayer: PlayerId;
   phase: GamePhase;
-  /** The player(s) who got every marble home first - both members of a team in 'teams'
-   * mode, a single player in 'ffa'. */
+  /** Who got every marble home first - both partners in 'teams', one player in 'ffa'. */
   winners: PlayerId[] | null;
 }
 

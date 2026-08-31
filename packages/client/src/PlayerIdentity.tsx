@@ -7,12 +7,12 @@ interface Props {
   onChange: (identity: Identity) => void;
 }
 
-/** Persistent top-of-flow strip - your name and your color, a click-to-expand marble
- * (MarbleColorPicker.tsx) standing in for both the swatch and the label a separate "Your
- * color" row used to need. Shown once, above whichever pregame screen is active (Lobby.tsx
- * renders this outside its own screen-switch), so it never remounts (and never re-steals
- * focus - see Lobby.tsx's per-screen heading focus instead) as you move between
- * menu/host/singleplayer/waiting. */
+/**
+ * The persistent top-of-flow strip: your name and your color, the latter as a click-to-expand
+ * marble standing in for both the swatch and the "Your color" label a separate row used to
+ * need. Lobby.tsx renders this outside its own screen switch, so it never remounts - and so
+ * never steals focus - as you move between menu, host, singleplayer and waiting screens.
+ */
 export function PlayerIdentity({ identity, onChange }: Props) {
   const nameId = useId();
 

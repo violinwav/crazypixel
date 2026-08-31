@@ -6,21 +6,24 @@ import { CARD_FACE_SPRITE, handCardWidthFor } from './game/cardArt';
 import { CardRankIndices } from './CardRankIndices';
 
 interface Props {
-  /** The card to show face-up on the pile. Usually state.lastPlayedCard, but a committed
-   * steal lays its card down before the move itself is sent (see GameBoard's
-   * pendingLaidCard) - the caller decides which, this just draws it. */
+  /** The card to show face-up. Usually state.lastPlayedCard, but a committed steal lays its
+   * card down before the move itself is sent (see GameBoard's pendingLaidCard) - the caller
+   * decides which, this just draws it. */
   card: Card;
   state: GameState;
   containerSize: { width: number; height: number };
   viewerSeat: PlayerId;
 }
 
-/** The discard pile's top (face-up) card - a real DOM .playing-card, positioned over the
- * Phaser canvas at the same discardPileCenter point TableScene.ts draws its own card-back
- * pile at (see drawDiscardStack there). Deliberately the same component/CSS/sprite every
- * other card on screen uses (HandPanel, FlyingCard, DealAnimation) instead of a separately
- * hand-tuned Phaser canvas font/size that only ever approximated it - one card resource, not
- * two independently-drifting ones. */
+/**
+ * The discard pile's top card: a real DOM .playing-card positioned over the Phaser canvas at
+ * the same discardPileCenter TableScene draws its card-back stack at. Deliberately the same
+ * component, CSS and sprite every other card on screen uses, rather than a separately
+ * hand-tuned Phaser canvas font that only ever approximated it - one card resource, not two
+ * that drift apart.
+ *
+ * aria-hidden: what was played is announced through GameBoard's aria-live region.
+ */
 export function LaidCard({ card, state, containerSize, viewerSeat }: Props) {
   if (containerSize.width === 0) return null;
 
@@ -28,10 +31,9 @@ export function LaidCard({ card, state, containerSize, viewerSeat }: Props) {
     containerSize.width, containerSize.height, trackLengthFor(state.config), viewerSeat, state.config.playerCount,
   );
   const { x, y } = discardPileCenter(geo);
-  // Sized off the hand card's own current width, not the board's trackRadius-relative scale
-  // - on a narrow phone the hand shrinks (see .hand-panel__card in theme.css) well before
-  // the board itself does, and the discard pile has to shrink in lockstep with it to still
-  // read as "the same card", not a board-scale one that stays bigger than the hand.
+  // Sized off the hand card's current width, not the board's trackRadius-relative scale: on a
+  // narrow phone the hand shrinks well before the board does, and the pile has to shrink with
+  // it to still read as "the same card".
   const width = handCardWidthFor(containerSize.width);
 
   const style: CSSProperties = {
@@ -44,9 +46,8 @@ export function LaidCard({ card, state, containerSize, viewerSeat }: Props) {
   } as CSSProperties;
 
   return (
-    // Keyed by card.id at the call site (GameBoard.tsx) so a new discard remounts this
-    // (rather than just swapping --card-face on the same node), replaying the pop-in
-    // animation below instead of the face silently changing mid-transition.
+    // Keyed by card.id at the call site, so a new discard remounts this and replays the pop-in
+    // animation instead of the face silently changing mid-transition.
     <div className="playing-card laid-card" style={style} aria-hidden="true">
       <CardRankIndices rank={card.rank} />
     </div>

@@ -1,3 +1,13 @@
+// The rules engine, and the single source of truth for every rule in the game.
+//
+// Two entry points matter to callers: `getLegalMoves(state, player, card)` enumerates every
+// legal Move, `applyMove(state, player, move)` commits one. Everything else here either
+// feeds those two or exists so the client can *preview* what they would do (planMovement,
+// captureIndicesFor, moveCaptureIndices) instead of re-deriving a rule and drifting from it.
+//
+// GameState is mutated in place by design. Callers that need immutability clone first - see
+// client useGameState.ts's cloneState (React StrictMode) and server GameRoom.commitTurn.
+
 import type {
   Card, CardRank, GameConfig, GameState, Marble, MarbleLocation, Move, PlayerId,
 } from './types';
@@ -9,6 +19,8 @@ import { pathIndices } from './board';
 
 const SUITS = ['spades', 'hearts', 'diamonds', 'clubs'] as const;
 const RANKS: Exclude<CardRank, 'JOKER'>[] = ['A', 'K', 'Q', 'J', '10', '9', '8', '7', '6', '5', '4', '3', '2'];
+
+// --- Setup and deck -------------------------------------------------------
 
 export function createDeck(): Card[] {
   const deck: Card[] = [];
@@ -49,7 +61,9 @@ export function createInitialState(config: GameConfig): GameState {
     lastPlayedBy: null,
     roundIndex: 0,
     dealerIndex: 0,
-    currentPlayer: 1, // every config has at least 2 players, so index 1 always exists
+    // Placeholder only - startGame sets the real opening seat. Every config has at least 2
+    // players, so index 1 is always valid to construct with.
+    currentPlayer: 1,
     phase: 'dealing',
     winners: null,
   };
@@ -59,7 +73,7 @@ function drawCards(state: GameState, count: number): Card[] {
   const drawn: Card[] = [];
   for (let i = 0; i < count; i++) {
     if (state.drawPile.length === 0) {
-      // Deck empties across a real game - reshuffle the discard pile rather than crash.
+      // The deck empties across a real game - reshuffle the discard pile rather than crash.
       state.drawPile = shuffle(state.discardPile);
       state.discardPile = [];
     }
@@ -77,8 +91,11 @@ export function dealRound(state: GameState): void {
   state.phase = 'cardPass';
 }
 
-/** Each player passes one chosen card face-down to their partner before play starts.
- * 'ffa' mode has no partner to pass to - not called in that mode. */
+/**
+ * Each player passes one chosen card face-down to their partner before play starts. A real
+ * rule, but no UI reaches it yet (startGame skips straight past the 'cardPass' phase), so
+ * nothing in this repo calls it. Throws in 'ffa' mode, which has no partner to pass to.
+ */
 export function passCard(state: GameState, from: PlayerId, card: Card): void {
   const partner = partnerOf(state.config, from);
   if (partner === null) throw new Error('No partner to pass to in ffa mode');
@@ -90,29 +107,26 @@ export function passCard(state: GameState, from: PlayerId, card: Card): void {
 }
 
 /**
- * Deals round 1 and drops straight into play. The card-passing sub-phase (each player
- * passes one card to their partner before play starts) is a real rule but isn't wired to
- * any UI yet, so this skips it rather than fake it - phase goes straight to 'playing'.
+ * Deals round 1 and drops straight into play, skipping the card-passing sub-phase rather
+ * than faking it (see passCard).
  */
 export function startGame(state: GameState): void {
   dealRound(state);
   state.phase = 'playing';
   const players = activePlayerIds(state.config);
-  // createInitialState's currentPlayer: 1 is just a type-safe placeholder (every config has
-  // at least 2 players, so index 1 is always valid to construct with) - it was never meant
-  // to be the real starting player. Without this, every game silently opened on Player 2,
-  // skipping Player 1's entire first turn.
   state.currentPlayer = players[0];
-  // Every round's starter is the seat after the dealer (see advanceTurn), and the game still
-  // opens on seat 0 - so round 1's dealer is the seat *before* it, i.e. the last one.
+  // Every round opens on the seat after the dealer (see advanceTurn), and game one opens on
+  // seat 0 - so round 1's dealer is the seat before it, i.e. the last one.
   state.dealerIndex = players[players.length - 1];
 }
 
+// --- Turn flow ------------------------------------------------------------
+
 /**
- * A player with no legal move for any card in hand discards their whole hand at once and
- * sits out (empty hand) until the next round's redeal - a full pass, not just a skipped
- * turn. Doesn't touch lastPlayedCard/lastPlayedBy: a pass isn't a played card, and letting
- * the next player's custom-8 "copy last card" reach back through a pass would be exploitable.
+ * A player with no legal move for any card discards their whole hand at once and sits out
+ * until the next round's redeal - a full pass, not a skipped turn. Deliberately leaves
+ * lastPlayedCard/lastPlayedBy alone: a pass isn't a played card, and letting the next
+ * player's custom-8 "copy last card" reach back through a pass would be exploitable.
  */
 export function passHand(state: GameState, player: PlayerId): void {
   state.discardPile.push(...state.hands[player]);
@@ -120,9 +134,8 @@ export function passHand(state: GameState, player: PlayerId): void {
 }
 
 /**
- * Advances to the next active player with cards left in hand (skipping anyone who has
- * already passHand'd this round). When every hand is empty, deals the next round first and
- * rotates the deal one seat on - see the round-boundary branch below.
+ * Advances to the next active player still holding cards, skipping anyone who has already
+ * passHand'd this round. When every hand is empty, deals the next round first.
  */
 export function advanceTurn(state: GameState): void {
   const players = activePlayerIds(state.config);
@@ -130,10 +143,8 @@ export function advanceTurn(state: GameState): void {
     state.roundIndex += 1;
     dealRound(state);
     state.phase = 'playing';
-    // Each fresh deal moves one seat further round the table: the dealer rotates, and the
-    // seat after the dealer opens the round. Deliberately anchored to dealerIndex, not to
-    // whoever moved last - who that is depends on the order players ran out of cards or
-    // passHand'd, so chaining off state.currentPlayer (as this used to) let a round start
+    // Anchored to dealerIndex, not to whoever moved last: who that is depends on the order
+    // players ran out of cards or passed, so chaining off currentPlayer would open a round
     // on an effectively arbitrary seat instead of the next one in line.
     state.dealerIndex = players[(players.indexOf(state.dealerIndex) + 1) % players.length];
     state.currentPlayer = players[(players.indexOf(state.dealerIndex) + 1) % players.length];
@@ -146,6 +157,8 @@ export function advanceTurn(state: GameState): void {
   state.currentPlayer = players[idx];
 }
 
+// --- Board queries --------------------------------------------------------
+
 function findMarble(state: GameState, marbleId: string): Marble {
   const marble = state.marbles.find((m) => m.id === marbleId);
   if (!marble) throw new Error(`Unknown marble ${marbleId}`);
@@ -154,6 +167,15 @@ function findMarble(state: GameState, marbleId: string): Marble {
 
 function marbleAtTrackIndex(state: GameState, index: number): Marble | undefined {
   return state.marbles.find((m) => m.location.zone === 'track' && m.location.index === index);
+}
+
+/**
+ * A marbles-only shallow clone, for replaying hypothetical moves. hands/piles are shared by
+ * reference: nothing in movement legality reads them, and structuredClone-ing the whole
+ * GameState (all 54 cards, every call) is what made an 8-marble 7-split take ~17 seconds.
+ */
+function cloneMarbles(state: GameState): GameState {
+  return { ...state, marbles: state.marbles.map((m) => ({ ...m, location: { ...m.location } })) };
 }
 
 function sendToKennel(state: GameState, marble: Marble): void {
@@ -165,15 +187,15 @@ function sendToKennel(state: GameState, marble: Marble): void {
   let slot = 0;
   while (occupied.has(slot)) slot++;
   marble.location = { zone: 'kennel', index: slot };
-  // A captured marble starts completely over - any lap it had already banked is gone, it
-  // has to earn the right to enter home again from scratch next time it's out.
+  // A captured marble starts over - any lap it banked is gone, and it has to earn the right
+  // to enter home again from scratch.
   marble.hasLapped = false;
 }
 
 /**
- * Rule text: once a marble sits on its owner's start square, passage there is blocked for
- * every marble on the board - including the owner's own others - until it moves away. The
- * guard marble also can't be sent home while it sits there.
+ * Once a marble sits on its owner's start square, passage there is blocked for every marble
+ * on the board, the owner's own included, until it moves away. The guard marble also can't
+ * be sent home while it sits there.
  */
 function isBlockaded(state: GameState, index: number): boolean {
   const owner = activePlayerIds(state.config).find((p) => startIndexFor(state.config, p) === index);
@@ -182,47 +204,41 @@ function isBlockaded(state: GameState, index: number): boolean {
   return !!guard && guard.owner === owner;
 }
 
+// --- Movement -------------------------------------------------------------
+
 export interface MovementPlan {
   location: MarbleLocation;
-  /** Track-space indices passed through, for blockade checks and the 7's pass-over
-   * capture. Doesn't include home-stretch slots - those aren't track squares, and nothing
-   * on the main track can block or be passed-over-captured there. */
+  /**
+   * Track-space indices passed through, for blockade checks and the 7's pass-over capture.
+   * Excludes home-stretch slots: those aren't track squares, and nothing on the main track
+   * can block or pass-over-capture there.
+   */
   trackPassed: number[];
   legal: boolean;
 }
 
 /**
- * Where a marble ends up after `steps` (positive = forward, negative = backward, e.g. the
- * 4's back-4 option).
+ * Where a marble ends up after `steps` (negative = backward, e.g. the 4's back-4 option).
  *
- * Forward: a marble enters home the moment its path would carry it *past* its own start
- * square (completing a lap). Landing *exactly* on the start square (not past it) doesn't
- * count as entering yet - it's still an ordinary track square at that point.
+ * Forward, a marble enters home the moment its path would carry it *past* its own start
+ * square. Landing exactly on that square isn't entering yet - it's an ordinary track square.
  *
- * Backward: there is no shortcut that drops a marble into home directly. Going backward is
- * a perfectly ordinary walk around the track (wrapping past index 0 the same way forward
- * movement wraps past trackLength-1) - it never enters home by itself, no matter how far
- * back it goes or whether it passes the marble's own start square along the way. House rule
- * text: landing exactly on your own start square by going backward earns the *right* to
- * enter home without doing the full lap - that's tracked via marble.hasLapped (set by
- * moveWithLandingCapture/moveWithPassOverCapture whenever a move lands a marble exactly on
- * its own start square, forward or backward alike), which is what lets the atEntrance check
- * below tell "just sitting on lapPos 0 because it was only just placed there by
- * startMarble" apart from "sitting on lapPos 0 because it already earned this" - position
- * alone can't tell those two apart, since they're the same square.
+ * Backward is a plain wraparound walk with no shortcut into home, however far it goes.
+ * Landing exactly on your own start square by going backward earns the *right* to enter
+ * home on a later forward move, which is what marble.hasLapped tracks (set by the two
+ * moveWith*Capture functions below). Position alone can't distinguish "only just placed
+ * here by startMarble" from "already earned this" - they're the same square.
  *
- * Exported (not just an internal legality-check helper) so the client can preview the same
- * authoritative path for move highlighting and descriptions, instead of a second,
- * simplified re-derivation that doesn't know about home-stretch entry drifting out of sync
- * with this one.
+ * Exported so the client previews the authoritative path for highlighting and descriptions
+ * rather than maintaining a second, simplified re-derivation of it.
  */
 export function planMovement(state: GameState, marble: Marble, steps: number): MovementPlan {
   const config = state.config;
   const trackLength = trackLengthFor(config);
 
   if (marble.location.zone === 'home') {
-    // Further movement within home (rare, but the 4's backward option could apply here
-    // too) - clamped, can't back out onto the main track once home.
+    // Movement within home (rare, but the 4's backward option applies here too) - clamped,
+    // since a marble can't back out onto the main track once home.
     const newIndex = marble.location.index + steps;
     const legal = newIndex >= 0 && newIndex < HOME_STRETCH_LENGTH;
     return { location: legal ? { zone: 'home', index: newIndex } : marble.location, trackPassed: [], legal };
@@ -230,11 +246,9 @@ export function planMovement(state: GameState, marble: Marble, steps: number): M
 
   const startIndex = startIndexFor(config, marble.owner);
   const lapPos = ((marble.location.index - startIndex) % trackLength + trackLength) % trackLength;
-  // Sitting exactly on the start square (lapPos 0) with hasLapped already true means this
-  // marble is parked right at its own entrance, ready to turn in on this very move - not
-  // "about to start a fresh lap from scratch". Treating that as lapPos === trackLength
-  // (rather than 0) is what makes a small card immediately usable to enter home from here,
-  // instead of demanding an entire extra lap before the crossing check below can ever fire.
+  // Parked on its own start square with a lap already banked: this marble is at its
+  // entrance, ready to turn in on this very move. Treating that as a full lap (rather than
+  // 0) is what lets a small card enter home from here instead of demanding another lap.
   const atEntrance = lapPos === 0 && marble.hasLapped;
   const effectiveLapPos = atEntrance ? trackLength : lapPos;
   const newLapPos = effectiveLapPos + steps;
@@ -246,22 +260,19 @@ export function planMovement(state: GameState, marble: Marble, steps: number): M
       const trackPassed = pathIndices(marble.location.index, stepsToStart, trackLength);
       return { location: { zone: 'home', index: homeSlot }, trackPassed, legal: true };
     }
-    // Card's too big to land exactly inside the goal - house rule (matches the real board
-    // game): the marble isn't blocked, it just keeps walking the main track past its own
-    // entrance instead, same as the plain forward case below. This is the *only* thing that
-    // changes turn to turn about a marble sitting right at its own entrance - every later
-    // approach re-runs this same exact-fit check from scratch, so a smaller card on some
-    // future turn can still bring it home.
+    // Card too big to land exactly inside the goal: the marble isn't blocked, it walks on
+    // past its own entrance (the plain forward case below). Every later approach re-runs
+    // this exact-fit check, so a smaller card on a future turn can still bring it home.
   }
 
   const trackPassed = pathIndices(marble.location.index, steps, trackLength);
   return { location: { zone: 'track', index: trackPassed[trackPassed.length - 1] }, trackPassed, legal: true };
 }
 
-/** Would `marble` landing at `plan.location` sit on top of another of its own owner's
- * marbles - track square or home slot. Never true for an opponent's marble (that's a
- * capture, not a stacking conflict) - your own marbles simply can't share a square, on the
- * field or in the goal. */
+/**
+ * Would landing at `plan.location` stack this marble on another of its owner's? Never true
+ * for an opponent's marble - that's a capture, not a conflict.
+ */
 function ownStackConflict(state: GameState, marble: Marble, plan: MovementPlan): boolean {
   if (plan.location.zone === 'track') {
     const occupant = marbleAtTrackIndex(state, plan.location.index);
@@ -276,14 +287,13 @@ function ownStackConflict(state: GameState, marble: Marble, plan: MovementPlan):
   return false;
 }
 
-/** Marbles inside the home stretch can't hop over each other on the way to a further slot -
- * no capturing happens there, so a blocked path is just illegal, the same as a start-square
- * guard blocks the main track. Covers both a home-to-home move (marble already in the goal,
- * moving to another slot) AND a track-to-home entry (marble crossing in fresh - every slot
- * from 0 up to the landing slot counts as "passed through" and must be clear too, not just
- * the landing slot itself). planMovement's trackPassed is empty for home-stretch space either
- * way, so this checks the home slots in between separately rather than folding it into the
- * track blockade check above. */
+/**
+ * Marbles in the home stretch can't hop over each other. Nothing is captured there, so a
+ * blocked path is simply illegal. Covers both a home-to-home move and a fresh track-to-home
+ * entry, where every slot from 0 up to the landing slot counts as passed through. Checked
+ * separately from the track blockade because planMovement's trackPassed is empty for
+ * home-stretch space either way.
+ */
 function homeStretchOvertake(state: GameState, marble: Marble, plan: MovementPlan): boolean {
   if (plan.location.zone !== 'home') return false;
   const fromIndex = marble.location.zone === 'home' ? marble.location.index : -1;
@@ -304,14 +314,18 @@ function isMoveClear(state: GameState, marble: Marble, steps: number): boolean {
   return !homeStretchOvertake(state, marble, plan);
 }
 
+// --- Legal move enumeration -----------------------------------------------
+
 export function getLegalMoves(
   state: GameState,
   player: PlayerId,
   card: Card,
-  /** False while enumerating the moves an 8 could copy. The 8's copy branch and the Joker's
+  /**
+   * False while enumerating the moves an 8 could copy. The 8's copy branch and the Joker's
    * wildAs branch each expand into the other's moves, so a Joker under an 8 (whose wildAs
-   * synthesizes an 8, whose copy branch sees the same Joker again) recursed forever - this
-   * flag cuts the second copy hop instead of banning the pairing outright. */
+   * synthesizes an 8, whose copy branch sees the same Joker again) recursed forever. This
+   * flag cuts the second copy hop instead of banning the pairing outright.
+   */
   allowCopy = true,
 ): Move[] {
   const def = CARD_DEFS[card.rank];
@@ -322,9 +336,8 @@ export function getLegalMoves(
   if (def.canStart) {
     const inKennel = ownMarbles.find((m) => m.location.zone === 'kennel');
     const occupant = marbleAtTrackIndex(state, startIndexFor(config, player));
-    // Your own marble on your start square blocks entry (same guard-square rule as
-    // isBlockaded) - an opponent's marble does not, it gets sent home instead (see
-    // applyEffect's startMarble case), same as any other landing capture.
+    // Your own marble on your start square blocks entry (the guard-square rule, see
+    // isBlockaded). An opponent's doesn't - it gets sent home, like any landing capture.
     const blockedByOwnMarble = !!occupant && occupant.owner === player;
     if (inKennel && !blockedByOwnMarble) {
       moves.push({ kind: 'startMarble', card, marbleId: inKennel.id });
@@ -332,9 +345,8 @@ export function getLegalMoves(
   }
 
   if (def.isJack) {
-    // A marble still sitting on its own start square hasn't really "entered play" yet (it's
-    // also the blockade guard there - see isBlockaded) - swapping it away, or swapping
-    // another marble onto it, isn't allowed until it's moved off that square at least once.
+    // A marble still on its own start square hasn't entered play yet (it's also the blockade
+    // guard there), so it can't be swapped away or swapped onto until it has moved off once.
     const isAtOwnStart = (m: Marble) => m.location.zone === 'track' && m.location.index === startIndexFor(config, m.owner);
     const onTrack = state.marbles.filter((m) => m.location.zone === 'track' && !isAtOwnStart(m));
     for (const a of onTrack.filter((m) => m.owner === player)) {
@@ -344,12 +356,11 @@ export function getLegalMoves(
     }
   }
 
-  // "Draw opponent's card" - a blind steal, not a forced draw from the shared pile: the
-  // acting player picks a position in the target's hand (shown face-down client-side, see
-  // StealCardOverlay.tsx) without seeing what's there. Every hand position is equally
-  // takeable, so this enumerates one legal move per (opponent, position) pair rather than
-  // one per opponent - same "let the UI narrow a pre-enumerated set" pattern as the 7-split
-  // and Joker rank picker.
+  // House rule, the 2: a blind steal, not a forced draw from the shared pile. The acting
+  // player picks a position in the target's hand (face-down client-side, see
+  // StealCardOverlay.tsx) without seeing what's there. Every position is equally takeable,
+  // so this enumerates one move per (opponent, position) pair and lets the UI narrow it -
+  // same pattern as the 7-split and the Joker rank picker.
   if (def.customTwo) {
     for (const opponent of opponentsOf(config, player)) {
       for (let i = 0; i < state.hands[opponent].length; i++) {
@@ -358,13 +369,9 @@ export function getLegalMoves(
     }
   }
 
-  // House rule: an 8 either moves 8, or replays whatever the previous card did. Copying
-  // another 8 is disallowed to avoid open-ended recursion (not specified in source text).
-  // Copying a JOKER *is* allowed, but only one hop deep: the Joker's "act as any card"
-  // below synthesizes an 8 variant, which would hit this exact branch and try to copy the
-  // same Joker again - infinite mutual recursion between the two house rules (a real stack
-  // overflow). The allowCopy flag cuts that second hop, which is why the pairing works
-  // instead of being banned outright.
+  // House rule, the 8: move 8, or replay whatever the previous card did. Copying another 8
+  // is disallowed to avoid open-ended recursion (not specified in the source rules).
+  // Copying a JOKER is allowed but only one hop deep - see allowCopy above.
   if (
     def.customEight
     && allowCopy
@@ -376,13 +383,11 @@ export function getLegalMoves(
     }
   }
 
-  // "Start or use as any card desired" - union every other rank's legal moves under this
-  // one Joker play. The UI picks a rank first, then a target, rather than flooding the
-  // board with every possible move for every rank at once (see BoardOverlay/HandPanel).
-  // Picking "A" or "K" here includes their own startMarble option too, even though the
-  // Joker's own bare canStart (above) already reaches the same move a different way -
-  // playing the Joker *as* a King should do everything a real King can, starting included,
-  // not a strict subset that pushes the player back to a separate generic "Start" option.
+  // House rule, the Joker: start, or act as any card. Unions every other rank's legal moves
+  // under one play; the UI picks a rank first, then a target, rather than flooding the board
+  // with every rank at once. Playing it *as* an Ace or King includes their startMarble too,
+  // even though the Joker's own canStart above already reaches that move a different way -
+  // a Joker-as-King should do everything a King does, not a subset.
   if (def.isWild) {
     for (const asRank of RANKS) {
       const asCard: Card = { id: card.id, suit: card.suit, rank: asRank };
@@ -402,9 +407,8 @@ export function getLegalMoves(
 
   if (def.isSevenSplit) {
     const partner = partnerOf(config, player);
-    // Home-stretch marbles are eligible too, moved individually same as any other segment -
-    // isMoveClear's homeStretchOvertake check is what actually stops them hopping over each
-    // other, not blanket exclusion from the split in the first place.
+    // Home-stretch marbles are eligible too, moved segment by segment like any other -
+    // homeStretchOvertake is what stops them hopping over each other, not exclusion here.
     const onTrackOrHome = (m: Marble) => m.location.zone === 'track' || m.location.zone === 'home';
     const eligible = ownMarbles
       .filter(onTrackOrHome)
@@ -415,24 +419,15 @@ export function getLegalMoves(
   return moves;
 }
 
-/** Replays `segments` (in order) onto a fresh clone of `state`, via the same pass-over-
- * capture movement each segment will really use - so a candidate combination's later
- * segments get checked for legality against the board as it would actually look partway
- * through the split, not the untouched starting position. This is what lets "move the
- * marble that just entered off the gateway 1 step, then the blocked marble behind it can
- * now take the other 6 into home" exist as a legal combination at all - checking every
- * segment against the pristine original state (the previous approach) meant the second
- * marble's blockade never appeared to clear, since the first marble's hypothetical move
- * never actually happened anywhere the check could see it. */
+/**
+ * Replays `segments` in order onto a scratch clone, using the same pass-over-capture
+ * movement each segment will really use - so a candidate's later segments are checked
+ * against the board as it would look partway through the split, not the starting position.
+ * That's what makes "move the marble that just entered one step out of the way, then take
+ * the other 6 into home with the marble behind it" legal at all.
+ */
 function stateAfterSegments(state: GameState, segments: { marbleId: string; steps: number }[]): GameState {
-  // Only `marbles` ever gets read or mutated by moveWithPassOverCapture/isMoveClear below -
-  // hands/drawPile/discardPile are irrelevant to movement legality, so they're reused by
-  // reference (never touched here) instead of deep-cloned. This is called a LOT during
-  // generateSevenSplits's search (every candidate order, every prefix) - structuredClone-ing
-  // the entire GameState (including all 54 cards across every hand/pile) on each call was
-  // the real cost there, not the marbles array itself (confirmed live: an 8-marble 7-split
-  // scenario took ~17 seconds with a full structuredClone per call).
-  const scratch: GameState = { ...state, marbles: state.marbles.map((m) => ({ ...m, location: { ...m.location } })) };
+  const scratch = cloneMarbles(state);
   for (const segment of segments) {
     const marble = scratch.marbles.find((m) => m.id === segment.marbleId);
     if (marble) moveWithPassOverCapture(scratch, marble, segment.steps);
@@ -440,21 +435,18 @@ function stateAfterSegments(state: GameState, segments: { marbleId: string; step
   return scratch;
 }
 
+/**
+ * Every legal way to spread `total` steps across `eligible`, as splitSeven moves.
+ *
+ * Searches execution *order*, not just the (marble -> steps) assignment: an assignment can
+ * have several orders and only some may be legal, so the next marble is picked from
+ * whatever is still `remaining` rather than from a fixed array index.
+ */
 function generateSevenSplits(state: GameState, eligible: Marble[], total: number, card: Card): Move[] {
   const results: Move[] = [];
   const seen = new Set<string>();
   const acc: { marbleId: string; steps: number }[] = [];
 
-  // A given (marbleId -> steps) assignment can have more than one execution order, and only
-  // some of those orders may actually be legal - "the marble that just entered moves 1 step
-  // out of the way, THEN the blocked marble takes 6 into home" is legal, but the reverse
-  // order isn't (checked segment-by-segment via stateAfterSegments). The old version always
-  // tried marbles in one fixed array order (`eligible`'s own order), so if the marble that
-  // needed to move *first* happened to sit *later* in that array, this combination was never
-  // generated at all - confirmed live, a real repro matching this exact scenario. Picking
-  // the next marble to move from whatever's still `remaining` (not a fixed index) explores
-  // every execution order, so a legal one gets found whenever it exists, regardless of which
-  // array slot either marble started in.
   function recurse(remaining: Marble[], left: number) {
     if (left === 0) {
       if (acc.length > 0) {
@@ -466,12 +458,9 @@ function generateSevenSplits(state: GameState, eligible: Marble[], total: number
       }
       return;
     }
-    // `acc` (and therefore the state it replays to) doesn't change across this whole
-    // double loop - only a push below changes it, and that always happens after every
-    // (marble, use) pair in the current loop has been checked against the SAME scratch.
-    // Computing it once per recurse() call instead of once per (marble, use) pair cut a
-    // real ~56x redundant-clone factor (remaining.length * left) off the search - confirmed
-    // live, an 8-marble scenario went from ~940ms to well under 100ms.
+    // Computed once per recurse() call, not once per (marble, use) pair: `acc` can't change
+    // inside the loop below, and hoisting it cut a ~56x redundant-clone factor
+    // (remaining.length * left) off the search - an 8-marble case went from ~940ms to <100ms.
     const scratch = stateAfterSegments(state, acc);
     for (let i = 0; i < remaining.length; i++) {
       const marble = remaining[i];
@@ -490,6 +479,8 @@ function generateSevenSplits(state: GameState, eligible: Marble[], total: number
   return results;
 }
 
+// --- Applying a move ------------------------------------------------------
+
 export function applyMove(state: GameState, player: PlayerId, move: Move): void {
   applyEffect(state, player, move);
   discardPlayedCard(state, player, move.card);
@@ -500,8 +491,8 @@ function applyEffect(state: GameState, player: PlayerId, move: Move): void {
   switch (move.kind) {
     case 'startMarble': {
       const startIdx = startIndexFor(state.config, player);
-      // Legal only when nobody's own marble is guarding the square (see getLegalMoves) - an
-      // opponent's marble caught there gets sent home, same landing-capture as any other move.
+      // getLegalMoves guarantees no marble of the player's own is guarding the square; an
+      // opponent's caught there is sent home, the same landing capture as any other move.
       const occupant = marbleAtTrackIndex(state, startIdx);
       if (occupant) sendToKennel(state, occupant);
       findMarble(state, move.marbleId).location = { zone: 'track', index: startIdx };
@@ -532,41 +523,41 @@ function applyEffect(state: GameState, player: PlayerId, move: Move): void {
     }
     case 'copyLastCard':
     case 'wildAs': {
-      // Effect only - discardPlayedCard (called once, by the outer applyMove) handles the
-      // real card in hand. Replaying here too would double-discard the old card.
+      // Effect only. The outer applyMove calls discardPlayedCard once for the real card;
+      // recursing into it here would double-discard.
       applyEffect(state, player, move.innerMove);
       break;
     }
   }
 }
 
-/** Landing exactly on your own start square - forward (completed a lap) or backward (the
- * 4's house rule) - earns marble.hasLapped, which is what lets planMovement's atEntrance
- * check treat a later move from that same square as "ready to turn in" instead of "owes a
- * full lap first". Both real movement functions below call this after placing the marble,
- * not planMovement itself - planMovement is also used for pure move-preview/highlighting,
- * which must never have side effects on the real state. */
+/**
+ * Landing exactly on your own start square - forward (lap complete) or backward (the 4's
+ * house rule) - earns marble.hasLapped, which is what lets planMovement's atEntrance check
+ * treat a later move from that square as "ready to turn in". Called by the two real movement
+ * functions rather than by planMovement, which must stay side-effect free for previews.
+ */
 function markLappedIfAtOwnStart(state: GameState, marble: Marble): void {
   if (marble.location.zone === 'track' && marble.location.index === startIndexFor(state.config, marble.owner)) {
     marble.hasLapped = true;
   }
 }
 
+/** Every card but the 7: only the square the marble stops on is captured. */
 function moveWithLandingCapture(state: GameState, marble: Marble, steps: number): void {
   const plan = planMovement(state, marble, steps);
-  if (!plan.legal) return; // shouldn't happen if getLegalMoves gated this correctly
+  if (!plan.legal) return; // unreachable if getLegalMoves gated this correctly
   if (plan.location.zone === 'track') {
     const occupant = marbleAtTrackIndex(state, plan.location.index);
     if (occupant && occupant.id !== marble.id) sendToKennel(state, occupant);
   }
-  // Entering home is never a capture - each player's home stretch is private to them,
-  // nothing else can ever be sitting there to bump.
+  // Entering home is never a capture - a home stretch is private to its owner, so nothing
+  // else can be sitting there to bump.
   marble.location = plan.location;
   markLappedIfAtOwnStart(state, marble);
 }
 
-/** The 7 additionally burns any marble it hops over along the way, not just the landing
- * square - including, now, marbles passed on the way into a home-stretch entry. */
+/** The 7: burns every marble hopped over as well as the landing square. */
 function moveWithPassOverCapture(state: GameState, marble: Marble, steps: number): void {
   const plan = planMovement(state, marble, steps);
   if (!plan.legal) return;
@@ -578,12 +569,12 @@ function moveWithPassOverCapture(state: GameState, marble: Marble, steps: number
   markLappedIfAtOwnStart(state, marble);
 }
 
+// --- Capture previews (read-only, for client highlighting) ----------------
+
 /**
- * Track indices where `marble` walking `steps` would send some other marble home - the
- * read-only preview counterpart of moveWithLandingCapture/moveWithPassOverCapture above,
- * so the client can highlight kills without re-deriving (and drifting from) the rule.
- * `mode` picks which of those two it mirrors: 'landing' (every card but the 7) only bumps
- * the square it stops on, 'passOver' (the 7) burns every square walked through as well.
+ * Track indices where `marble` walking `steps` would send another marble home - the
+ * read-only counterpart of the two moveWith*Capture functions, so the client can highlight
+ * kills without re-deriving the rule. `mode` picks which one it mirrors.
  */
 export function captureIndicesFor(
   state: GameState,
@@ -593,9 +584,8 @@ export function captureIndicesFor(
 ): number[] {
   const plan = planMovement(state, marble, steps);
   if (!plan.legal) return [];
-  // Entering home is never a capture, so a landing move that ends in the home stretch has
-  // no square to flag at all - trackPassed there is only the run-up, which a non-7 walks
-  // straight over without touching anything.
+  // Entering home is never a capture, so a landing move ending in the home stretch flags
+  // nothing - trackPassed there is only the run-up, which a non-7 walks straight over.
   const candidates = mode === 'passOver'
     ? plan.trackPassed
     : plan.location.zone === 'track' ? [plan.location.index] : [];
@@ -605,17 +595,18 @@ export function captureIndicesFor(
   });
 }
 
-/** Every track index `move` would send a marble home from. Sequential for a 7-split, the
- * same way applyEffect runs its segments (an earlier segment can move the very marble a
- * later one would otherwise have burned), via the same marbles-only scratch clone
- * generateSevenSplits uses. */
+/**
+ * Every track index `move` would send a marble home from. A 7-split is walked sequentially,
+ * the same way applyEffect runs its segments, since an earlier segment can move the very
+ * marble a later one would otherwise have burned.
+ */
 export function moveCaptureIndices(state: GameState, move: Move): number[] {
   switch (move.kind) {
     case 'startMarble': {
       const startIdx = startIndexFor(state.config, state.currentPlayer);
       const occupant = marbleAtTrackIndex(state, startIdx);
-      // Only an opponent can be sitting there - your own marble makes the move illegal in
-      // the first place (see getLegalMoves' blockedByOwnMarble).
+      // Only an opponent can be there - your own marble makes the move illegal to begin
+      // with (see getLegalMoves' blockedByOwnMarble).
       return occupant && occupant.id !== move.marbleId ? [startIdx] : [];
     }
     case 'moveMarble': {
@@ -624,7 +615,7 @@ export function moveCaptureIndices(state: GameState, move: Move): number[] {
     }
     case 'splitSeven': {
       const indices: number[] = [];
-      const scratch: GameState = { ...state, marbles: state.marbles.map((m) => ({ ...m, location: { ...m.location } })) };
+      const scratch = cloneMarbles(state);
       for (const segment of move.steps) {
         const marble = scratch.marbles.find((m) => m.id === segment.marbleId);
         if (!marble) continue;
@@ -636,16 +627,18 @@ export function moveCaptureIndices(state: GameState, move: Move): number[] {
     case 'copyLastCard':
     case 'wildAs':
       return moveCaptureIndices(state, move.innerMove);
-    // A swap displaces nobody (both marbles stay on the board) and forceDraw never touches
-    // the track at all.
+    // A swap displaces nobody and forceDraw never touches the track.
     default:
       return [];
   }
 }
 
-/** A player (ffa) or both members of a team (teams) win the instant every one of their
- * marbles is home. Checked after every move; first to qualify wins, ties aren't possible
- * since this runs synchronously after each single move. */
+// --- Win condition --------------------------------------------------------
+
+/**
+ * A player (ffa) or both partners (teams) win the instant every one of their marbles is
+ * home. Runs synchronously after each move, so ties aren't possible.
+ */
 function checkWinner(state: GameState): void {
   if (state.winners) return;
   const config = state.config;

@@ -9,12 +9,13 @@ interface Props {
   viewerSeat: PlayerId;
 }
 
-/** The "lay down cards" fallback anchors in the gap between the discard pile and the ring's
- * own bottom edge - not dead center on top of the board (the old anchor, geo.center), which
- * sat the button directly over track tiles/marbles and read as part of the board rather than
- * a real control. Both landmarks it sits between (trackRadius, stackCenter) are already part
- * of this same geometry system, so the button tracks them through every resize/player-count
- * change instead of drifting out of that gap on its own. */
+/**
+ * The "lay down cards" fallback, shown only when the current player has no legal move for any
+ * card in hand. Anchored in the gap between the discard pile and the ring's bottom edge rather
+ * than dead-center over the board, where it sat on top of track tiles and marbles and read as
+ * part of the board instead of a control. Both landmarks it sits between come from the same
+ * geometry system, so it tracks them through every resize and player count.
+ */
 export function BoardStatus({ state, containerSize, onPassHand, viewerSeat }: Props) {
   const player = state.currentPlayer;
   if (containerSize.width === 0) return null;

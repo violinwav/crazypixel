@@ -16,38 +16,34 @@ interface Props {
   playerNames?: string[];
 }
 
-// Gap between the discard pile's own left edge and the feed's right edge.
+// Gap between the discard pile's left edge and the feed's right edge.
 const PILE_GAP = 12;
-// Keeps the column off the viewport's left edge on a narrow phone even when the
-// pile-relative math would push it there.
+// Keeps the column off the viewport's left edge on a narrow phone, even when the pile-relative
+// math would push it there.
 const EDGE_MARGIN = 8;
-// Fixed column width, so every message chip is the same width and their colour bars stack
-// into one continuous vertical rail. Sized off the widest kaomoji in the catalogue
-// (`╾━╤デ╦︻ (•_- )`, ~103px at 15px) plus the chip's own padding and border. Without a fixed
-// width each chip shrank to its own content and, because the column is anchored on its right
-// edge against the pile, every bar landed at a different x - measured live at 402 and 336 for
-// two messages sitting directly above one another. Clamped below on a narrow viewport, where
-// the space between the pile and the screen edge is less than this.
+// A fixed column width, so every chip is the same width and their color bars stack into one
+// continuous vertical rail. Sized off the widest kaomoji in the catalogue plus the chip's own
+// padding and border. Without a fixed width each chip shrank to its own content and, because
+// the column is anchored on its right edge against the pile, every bar landed at a different x.
+// Clamped below on a narrow viewport, where the space beside the pile is less than this.
 const FEED_WIDTH = 128;
-// Alpha for the newest line down to the oldest still on screen. Not a computed ramp: these
+// Alpha from the newest line down to the oldest still on screen. Not a computed ramp: these
 // four values are the ones that keep every visible line above 4.5:1 for the worst hue on the
-// wheel (see hueToTextCss's own note in game/color.ts for the measurements). The stronger
-// visual fade comes from each line's backing chip, which carries no text and so is free to
-// drop to nothing.
+// wheel (see hueToTextCss in game/color.ts). The stronger visual fade comes from each line's
+// backing chip, which carries no text and so is free to drop to nothing.
 const DEPTH_ALPHA = [1, 0.9, 0.8, 0.7];
 
-/** Recent emotes, stacked to the LEFT of the discard pile and rising out of it - newest at
- * the bottom, level with the pile where the eye already is between turns; older ones pushed
- * up and dimmed until they age out. Anchored off discardPileCenter, the same geometry
- * LaidCard.tsx draws the pile itself with, so the column tracks the pile through every
- * resize and player count instead of sitting at a hand-tuned offset that only lines up at
- * one viewport size.
+/**
+ * Recent emotes, stacked to the LEFT of the discard pile and rising out of it - newest at the
+ * bottom, level with the pile where the eye already is between turns, older ones pushed up and
+ * dimmed until they age out. Anchored off discardPileCenter, the same geometry LaidCard draws
+ * the pile with, so the column tracks it through every resize and player count.
  *
- * Purely visual - aria-hidden, with the spoken version going through GameBoard's own
- * role="log" region. Same split StealAlert uses, and doubly right here: a kaomoji read
- * glyph-by-glyph is noise ("macron, backslash, low line, left parenthesis, tsu..."), and the
- * reordering and opacity churn as lines rise would re-announce the whole column on every
- * message. The catalogue's `label` is what actually gets spoken. */
+ * Purely visual, and aria-hidden: the spoken version goes through GameBoard's role="log"
+ * region. A kaomoji read glyph by glyph is noise ("macron, backslash, low line, left
+ * parenthesis, tsu..."), and the reordering and opacity churn as lines rise would re-announce
+ * the whole column on every message. The catalogue's `label` is what actually gets spoken.
+ */
 export function EmoteFeed({ emotes, state, containerSize, viewerSeat, colors, playerNames }: Props) {
   if (containerSize.width === 0 || emotes.length === 0) return null;
 
@@ -73,9 +69,9 @@ export function EmoteFeed({ emotes, state, containerSize, viewerSeat, colors, pl
       {emotes.map((entry, i) => {
         const emote = emoteById(entry.emoteId);
         if (!emote) return null;
-        // Depth counted from the BOTTOM (newest = 0), which is what the fade is keyed to -
-        // `emotes` is oldest-first and the column renders bottom-up, so a raw array index
-        // would fade the newest line hardest.
+        // Depth counted from the BOTTOM (newest = 0), which is what the fade is keyed to:
+        // `emotes` is oldest-first and the column renders bottom-up, so a raw array index would
+        // fade the newest line hardest.
         const depth = emotes.length - 1 - i;
         return (
           <p

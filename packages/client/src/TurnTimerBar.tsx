@@ -1,16 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 
 const TURN_MS = 20000;
-// Announced once each, not continuously - a screen reader user needs to know time is
-// running out (this can cost you your intended move to auto-play), but a running "19...
-// 18... 17..." readout would drown out everything else on the page.
+// Ticked on a fixed interval, not requestAnimationFrame - rAF is throttled in backgrounded and
+// unfocused tabs (see PhaserGame.ts), which is exactly when an opponent's turn plays out.
+const TICK_MS = 200;
+// Announced once each, not continuously: a running "19... 18... 17..." readout would drown out
+// everything else on the page. The stakes are only real on the viewer's OWN turn, where running
+// out auto-plays a move for them - GameBoard mounts this bar on every seat's turn, so on a
+// six-player table most of these announcements are informational rather than actionable.
 const ANNOUNCE_THRESHOLDS_S = [10, 5];
 
-// Fill starts shifting toward red once half the turn's time is gone, reaching full red
-// (--player-red) at the quarter-remaining mark - not just an empty-bar cue, an increasingly
-// urgent color one too.
+// The fill shifts toward red once half the turn is gone, reaching full red at the
+// quarter-remaining mark - an increasingly urgent color cue, not just an emptying bar.
 const URGENCY_START_FRACTION = 0.5;
 const URGENCY_FULL_FRACTION = 0.25;
+// A fourth copy of the palette, beyond the three CLAUDE.md lists (theme.css, game/theme.ts,
+// generate-sprites.py) - needed as component channels because the fill is interpolated in JS,
+// and CSS custom properties can't be read as numbers here.
 const CALM_COLOR: [number, number, number] = [255, 255, 255]; // --ink
 const URGENT_COLOR: [number, number, number] = [255, 84, 112]; // --player-red
 
@@ -23,18 +29,17 @@ function fillColorFor(fraction: number): string {
 }
 
 interface Props {
-  /** Server epoch ms when the current turn auto-plays - see GameRoom.ts's turnDeadline. This
-   * bar is cosmetic only; the server is what actually enforces the timeout, so a client
-   * running slightly behind/ahead just sees the bar empty a beat early/late, never a wrong
-   * outcome. */
+  /** Server epoch ms when the current turn auto-plays. This bar is cosmetic - the server is
+   * what enforces the timeout, so a client running slightly fast or slow just sees the bar
+   * empty a beat early or late, never a wrong outcome. */
   deadline: number;
 }
 
-/** Thin countdown strip pinned to the top of the hand panel (see theme.css's .turn-timer) -
- * shrinks from full to empty as the deadline approaches, "reversed" from a normal loading
- * bar that fills up. Ticks on a fixed interval, not requestAnimationFrame - see
- * PhaserGame.ts's own comment on rAF being throttled in backgrounded/unfocused tabs, same
- * concern applies here. */
+/**
+ * A thin countdown strip pinned above the hand panel, shrinking from full to empty as the
+ * deadline approaches - reversed from a normal loading bar. Online only; local hotseat has no
+ * server to enforce a timeout and shows no timer at all.
+ */
 export function TurnTimerBar({ deadline }: Props) {
   const [now, setNow] = useState(() => Date.now());
   const [announcement, setAnnouncement] = useState('');
@@ -46,7 +51,7 @@ export function TurnTimerBar({ deadline }: Props) {
   }, [deadline]);
 
   useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 200);
+    const interval = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(interval);
   }, [deadline]);
 

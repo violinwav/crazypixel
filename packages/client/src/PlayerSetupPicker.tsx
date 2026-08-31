@@ -1,3 +1,6 @@
+// Singleplayer/hotseat setup: player count, mode, and a color per seat. Online hosting skips
+// all of this - a room adapts to however many people actually join.
+
 import { partnerOf } from '@crazypixel/shared';
 import type { GameConfig, GameMode, PlayerId } from '@crazypixel/shared';
 import { MarbleColorPicker } from './MarbleColorPicker';
@@ -14,18 +17,21 @@ interface Props {
 
 const PLAYER_COUNTS: GameConfig['playerCount'][] = [2, 3, 4, 6];
 
-/** Teams needs an even seat count so every player has exactly one partner directly across
- * the table (see partnerOf in constants.ts) - 2 is its own degenerate case (your only
- * opponent would also be your "partner"), 3 has no symmetric partner at all. */
+/**
+ * Teams needs an even seat count so every player has exactly one partner across the table (see
+ * partnerOf). 2 is its own degenerate case - your only opponent would also be your partner -
+ * and 3 has no symmetric partner at all.
+ */
 function teamsAvailable(playerCount: GameConfig['playerCount']): boolean {
   return playerCount >= 4 && playerCount % 2 === 0;
 }
 
-// Hues (0-359) spread evenly around the wheel, one seed per seat - a reasonable starting
-// point that keeps every seat visibly distinct before anyone touches a slider. Colors are
-// continuous now (see ColorSlider.tsx), so unlike the old fixed-6-palette version there's no
-// scarcity to defend - two seats landing on the same or a nearby hue after manual picks is
-// just the players' own choice, not a bug.
+/**
+ * Hues spread evenly around the wheel, one seed per seat - a starting point that keeps every
+ * seat visibly distinct before anyone touches a slider. Color is continuous now, so unlike a
+ * fixed palette there is no scarcity to defend: two seats landing on nearby hues after manual
+ * picks is the players' own choice, not a bug.
+ */
 export function defaultColors(count: number): number[] {
   return Array.from({ length: count }, (_, i) => Math.round((360 / count) * i));
 }

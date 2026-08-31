@@ -8,21 +8,20 @@ interface Props {
   playerNames?: string[];
   onPlayAgain?: () => void;
   /** Defaults to 'Play Again' (local hotseat, where it really is just another game on this
-   * device). Online passes 'Rematch' - same seats, same room, same people, which is what
-   * that word means to the players and what the hint below calls it too. */
+   * device). Online passes 'Rematch' - same seats, same room, same people. */
   playAgainLabel?: string;
-  /** Shown in the button's place when onPlayAgain is absent - online, only the host can
-   * start a rematch (see GameRoom.handleRematch), and everyone else needs to be told that's
-   * what they're waiting on rather than being left with a win screen that looks like a dead
-   * end. Undefined for local hotseat, which always has its own Play Again. */
+  /** Shown in the button's place when onPlayAgain is absent. Online, only the host can start a
+   * rematch, and everyone else needs to be told that's what they're waiting on rather than
+   * left with a win screen that looks like a dead end. */
   playAgainHint?: string;
 }
 
-// Reload rather than a React-level "back to lobby" - GameView's Phaser instance is
-// deliberately never torn down mid-session (see its own comment on why: StrictMode's
-// dev-only double-invoke tearing down a Phaser.Game mid-boot leaves an orphaned canvas).
-// Changing config means a genuinely new game, so a real page load is the safe way back
-// rather than reintroducing that teardown risk for a rarely-used exit path.
+/**
+ * A full page reload rather than a React-level "back to lobby": GameBoard's Phaser instance is
+ * deliberately never torn down mid-session (StrictMode's dev-only double-invoke tearing down a
+ * Phaser.Game mid-boot leaves an orphaned canvas). Changing config means a genuinely new game,
+ * so a real load is the safe way back rather than reintroducing that risk for a rare path.
+ */
 function backToLobby() {
   window.location.reload();
 }
@@ -51,10 +50,10 @@ export function WinScreen({ state, colors, playerNames, onPlayAgain, playAgainLa
               {playAgainLabel}
             </button>
           ) : playAgainHint ? (
-            /* aria-live: the host can start the rematch at any moment, and when they do this
-               whole dialog unmounts with no other cue. Announcing the wait when the dialog
-               opens is what makes that disappearance read as "the host started it" rather
-               than the screen just vanishing. */
+            /* aria-live because the host can start the rematch at any moment, and when they do
+               this whole dialog unmounts with no other cue. Announcing the wait when the dialog
+               opens is what makes that disappearance read as "the host started it" rather than
+               the screen just vanishing. */
             <p className="win-screen__hint" aria-live="polite">{playAgainHint}</p>
           ) : null}
           <button type="button" className="cp-button" onClick={backToLobby}>

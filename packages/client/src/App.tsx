@@ -1,3 +1,6 @@
+// Top-level screen switch: lobby, local hotseat game, or online game. Also owns the single
+// app-wide dither background, which the active board tints via onBackgroundChange.
+
 import { useState } from 'react';
 import { Lobby } from './Lobby';
 import type { GameSetup } from './Lobby';
@@ -11,13 +14,14 @@ import { usePlayerIdentity } from './game/playerIdentity';
 export default function App() {
   const [setup, setSetup] = useState<GameSetup | null>(null);
   const [onlineSession, setOnlineSession] = useState<OnlineSession | null>(null);
-  // Set by GameBoard once a game is active (see its onBackgroundChange prop) - null outside
-  // a game (lobby/menu screens), where the background just stays its plain default look.
+  // Set by GameBoard once a game is active; null on the lobby screens, where the background
+  // keeps its plain default look.
   const [background, setBackground] = useState<BoardBackground | null>(null);
   const [identity, setIdentity] = usePlayerIdentity();
 
-  let content;
   const inGame = Boolean(onlineSession || setup);
+
+  let content;
   if (onlineSession) {
     content = <OnlineGameView session={onlineSession} onBackgroundChange={setBackground} />;
   } else if (setup) {
@@ -33,9 +37,8 @@ export default function App() {
       <PixelDither
         className="app-background"
         color={background?.color}
-        // Vivid (denser, brighter, multi-level white) look only outside an active game -
-        // GameBoard's own single-hue per-player tint (background?.color) takes over the
-        // instant one starts.
+        // The vivid (denser, brighter, multi-level white) look is menu-only - GameBoard's
+        // single-hue per-player tint takes over the instant a game starts.
         vivid={!inGame}
         visible={background?.visible ?? true}
       />

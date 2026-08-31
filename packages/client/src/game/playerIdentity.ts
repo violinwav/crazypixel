@@ -1,3 +1,5 @@
+// The player's own profile - display name and color hue - persisted across visits.
+
 import { useEffect, useState } from 'react';
 
 const STORAGE_KEY = 'crazypixel:identity';
@@ -27,11 +29,12 @@ function load(): PlayerIdentity {
   return { name: '', hue: randomHue() };
 }
 
-/** Persists the player's own display name + color hue across visits - the identity strip
- * at the top of the pregame flow (PlayerIdentity.tsx) reads/writes this, and it's what
- * online hosting/joining sends as displayName/hostHue. Local hotseat leaves it alone -
- * hotseat has no single "you" (see playerName.ts's fallback-to-"Player N" comment), the
- * strip there is just a carry-over convenience for whenever you later go online. */
+/**
+ * Reads and writes the persisted profile. The identity strip at the top of the pregame flow
+ * (PlayerIdentity.tsx) owns it, and it is what online hosting/joining sends as
+ * displayName/hostHue. Local hotseat ignores it - there is no single "you" there (see
+ * playerName.ts) - and only carries it along for whenever the player later goes online.
+ */
 export function usePlayerIdentity() {
   const [identity, setIdentity] = useState<PlayerIdentity>(load);
 
@@ -39,7 +42,7 @@ export function usePlayerIdentity() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(identity));
     } catch {
-      // Nothing to persist to - the in-memory value still works for the rest of this session.
+      // Nothing to persist to - the in-memory value still works for this session.
     }
   }, [identity]);
 
