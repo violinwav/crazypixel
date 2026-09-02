@@ -136,8 +136,16 @@ export function passHand(state: GameState, player: PlayerId): void {
 /**
  * Advances to the next active player still holding cards, skipping anyone who has already
  * passHand'd this round. When every hand is empty, deals the next round first.
+ *
+ * A finished game is left completely alone. Every caller (local play/pass, server
+ * commitTurn, the turn-clock auto-play) runs this straight after applyMove, and applyMove is
+ * exactly what sets `gameEnd` - so without this guard a winning move that also emptied the
+ * last hand fell into the redeal branch below, which dealt a new round and put `phase` back
+ * to 'playing'. `winners` stayed set (checkWinner never fires twice) but WinScreen needs
+ * both, so the game silently carried on with no win popup and no way to ever reach one.
  */
 export function advanceTurn(state: GameState): void {
+  if (state.phase === 'gameEnd') return;
   const players = activePlayerIds(state.config);
   if (players.every((p) => state.hands[p].length === 0)) {
     state.roundIndex += 1;

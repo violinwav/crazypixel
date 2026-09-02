@@ -188,7 +188,12 @@ export function GameBoard({
     }
   }, []);
 
-  const isMyTurn = mySeat === state.currentPlayer;
+  // Ends with the game, for the same reason emotes do (see emotesEnabled): the win screen is
+  // position:fixed with no focus trap, so the board overlay's move buttons, the "Lay down
+  // cards" button and the hand's cards would all stay tabbable underneath it - focusable
+  // controls with nothing visible on screen. The winning seat stays `currentPlayer` now that
+  // advanceTurn leaves a finished game alone, so this is what makes their board go inert.
+  const isMyTurn = mySeat === state.currentPlayer && state.phase !== 'gameEnd';
 
   useEffect(() => {
     if (!canvasMountRef.current || bridgeRef.current) return;
@@ -322,7 +327,9 @@ export function GameBoard({
   // Announces whose turn it now is, not just what was played. This matters most online, where the
   // board overlay silently mounts or unmounts on isMyTurn with no other cue for a screen reader
   // user that the board just became (or stopped being) interactive.
-  const turnAnnouncement = isMyTurn ? "It's your turn." : `Waiting for ${playerLabel(playerNames, state.currentPlayer)}.`;
+  const turnAnnouncement = state.phase === 'gameEnd'
+    ? ''
+    : isMyTurn ? "It's your turn." : `Waiting for ${playerLabel(playerNames, state.currentPlayer)}.`;
 
   // The win screen is position:fixed over the whole viewport with no focus trap, so an emote HUD
   // left mounted underneath it would be invisible but still tabbable - a focused control

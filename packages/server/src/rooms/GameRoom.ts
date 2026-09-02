@@ -302,9 +302,20 @@ export class GameRoom extends Room<RoomState> {
 
   // --- Message handlers ---------------------------------------------------
 
+  /**
+   * Both phases have to hold: the room must be past the lobby, and the game itself must not be
+   * over. Room phase alone never leaves 'playing' once Start fires, so it says nothing about a
+   * finished game - and the engine happily enumerates legal moves for a seat whose game already
+   * ended, so a client still holding a live board (a stale tab, or one that missed the final
+   * state patch) could otherwise keep committing real turns behind the win screen.
+   */
+  private acceptsTurns(state: GameState): boolean {
+    return this.state.phase === 'playing' && state.phase !== 'gameEnd';
+  }
+
   private handlePlay(client: Client, { move }: PlayMessage) {
     const state = this.gameState;
-    if (!state || this.state.phase !== 'playing') return;
+    if (!state || !this.acceptsTurns(state)) return;
     const seat = this.seatFor(client);
     if (seat === null || seat !== state.currentPlayer) return;
 
@@ -317,7 +328,7 @@ export class GameRoom extends Room<RoomState> {
 
   private handlePassHand(client: Client) {
     const state = this.gameState;
-    if (!state || this.state.phase !== 'playing') return;
+    if (!state || !this.acceptsTurns(state)) return;
     const seat = this.seatFor(client);
     if (seat === null || seat !== state.currentPlayer) return;
 
@@ -350,7 +361,7 @@ export class GameRoom extends Room<RoomState> {
    */
   private handleStealIntent(client: Client, { targetPlayer, card }: StealIntentMessage) {
     const state = this.gameState;
-    if (!state || this.state.phase !== 'playing') return;
+    if (!state || !this.acceptsTurns(state)) return;
     const seat = this.seatFor(client);
     if (seat === null || seat !== state.currentPlayer) return;
     const isRealOpponent = Number.isInteger(targetPlayer)
