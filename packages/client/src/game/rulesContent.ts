@@ -32,7 +32,17 @@ export interface DemoMarble {
 export interface TrackFrame {
   caption: string;
   marbles: DemoMarble[];
-  /** Track squares lit as the path just walked, in walk order - the stagger reads as motion. */
+  /**
+   * The marble that WALKS this frame, square by square, the way TableScene animates a real
+   * move. Everything else takes the board's plain 220ms tween (a Jack swap, a marble leaving
+   * the kennel, a captured marble going home) - the same split planMarbles makes.
+   */
+  walker?: string;
+  /**
+   * The squares the walk covers, in walk order and INCLUDING the one departed from - matching
+   * TableScene.walkMarble, which drops a trail mark on the departure square before stepping.
+   * So `trail.length - 1` is the number of legs, and the walk's duration falls out of it.
+   */
   trail?: number[];
   /** Track squares flashed as a capture on this frame. */
   captured?: number[];
@@ -111,7 +121,8 @@ function plainMove(steps: number): TrackDemo {
       {
         caption: `Move it exactly ${steps} squares forward. No choice, no split.`,
         marbles: [{ id: 'you', role: 'you', at: track(steps) }],
-        trail: walk(1, steps),
+        walker: 'you',
+        trail: walk(0, steps),
       },
     ],
   };
@@ -142,7 +153,8 @@ export const GOAL_DEMO: TrackDemo = {
         { id: 'you', role: 'you', at: track(9) },
         { id: 'rival', role: 'rival', at: kennel(0) },
       ],
-      trail: walk(1, 9),
+      walker: 'you',
+      trail: walk(0, 9),
       captured: [9],
     },
     {
@@ -151,7 +163,8 @@ export const GOAL_DEMO: TrackDemo = {
         { id: 'you', role: 'you', at: home(0) },
         { id: 'rival', role: 'rival', at: kennel(0) },
       ],
-      trail: walk(10, 13),
+      walker: 'you',
+      trail: walk(9, 13),
       homeLit: true,
     },
     {
@@ -187,12 +200,14 @@ export const RULE_CARDS: RuleCard[] = [
         {
           caption: 'Or, for a marble already out, move one square…',
           marbles: [{ id: 'you', role: 'you', at: track(1) }],
-          trail: [1],
+          walker: 'you',
+          trail: walk(0, 1),
         },
         {
           caption: '…or eleven. You pick which, every time you play it.',
           marbles: [{ id: 'you', role: 'you', at: track(12) }],
-          trail: walk(2, 12),
+          walker: 'you',
+          trail: walk(1, 12),
         },
       ],
     },
@@ -216,7 +231,8 @@ export const RULE_CARDS: RuleCard[] = [
         {
           caption: 'Or spend it as thirteen squares - the longest single move in the deck.',
           marbles: [{ id: 'you', role: 'you', at: track(13) }],
-          trail: walk(1, 13),
+          walker: 'you',
+          trail: walk(0, 13),
         },
       ],
     },
@@ -322,7 +338,8 @@ export const RULE_CARDS: RuleCard[] = [
             { id: 'b', role: 'you', at: track(8) },
             { id: 'rival', role: 'rival', at: track(10) },
           ],
-          trail: walk(3, 5),
+          walker: 'a',
+          trail: walk(2, 5),
         },
         {
           caption: '…and the last four on the second. A seven sends home everything it walks over, not just what it lands on.',
@@ -331,7 +348,8 @@ export const RULE_CARDS: RuleCard[] = [
             { id: 'b', role: 'you', at: track(12) },
             { id: 'rival', role: 'rival', at: kennel(0) },
           ],
-          trail: walk(9, 12),
+          walker: 'b',
+          trail: walk(8, 12),
           captured: [10],
         },
         {
@@ -363,17 +381,20 @@ export const RULE_CARDS: RuleCard[] = [
         {
           caption: 'Four squares forward…',
           marbles: [{ id: 'you', role: 'you', at: track(8) }],
-          trail: walk(5, 8),
+          walker: 'you',
+          trail: walk(4, 8),
         },
         {
           caption: '…or four backward. It is the only card in the deck that reverses.',
           marbles: [{ id: 'you', role: 'you', at: track(4) }],
-          trail: walk(7, 4),
+          walker: 'you',
+          trail: walk(8, 4),
         },
         {
           caption: 'Backing exactly onto your own start square earns your home entry - without walking a whole lap for it.',
           marbles: [{ id: 'you', role: 'you', at: track(0) }],
-          trail: walk(3, 0),
+          walker: 'you',
+          trail: walk(4, 0),
           homeLit: true,
         },
       ],

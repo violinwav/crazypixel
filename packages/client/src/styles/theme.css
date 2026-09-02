@@ -1846,8 +1846,13 @@ canvas {
   max-width: 720px;
 }
 
+/* Ghost, but in full ink rather than the variant's --ink-dim: this sits at the bottom of the
+   menu as the last thing on the screen, and dimmed text there read as disabled next to the
+   two filled buttons above it. The border stays dim, so it is still visibly the quieter
+   control - it just isn't greyed out. */
 .lobby__rules-btn {
   width: 100%;
+  color: var(--ink);
 }
 
 .rules__title {
@@ -2064,37 +2069,89 @@ canvas {
 
 /* One lane, read left to right: kennel, the owner's start square, the track, then the home
    stretch. A real board is a ring, but a ring at this size is a diagram of nothing - the
-   captions carry the "one full lap" part that the straight line can't. */
+   captions carry the "one full lap" part that the straight line can't.
+
+   Everything below is sized off the marble, exactly as the board is. On the ring a marble is
+   MARBLE_SIZE (22px, generate-sprites.py) and every field is a multiple of it: kennel socket
+   30/22, goal slot 24/22, trail mark 0.72, track tile TRACK_TILE_GAP (0.68), flash 1.4 (all
+   from TableScene). Putting the marble at 78% of a column reproduces those proportions here,
+   so a track tile really is a little over half the marble standing on it, the way it is in
+   game - checked against a running 4-player board, not just derived on paper. The tile also
+   carries TableScene's length shrink at its 4-player value (0.68 * 0.75), since that is the
+   board everyone actually sees. */
 .rules-track {
   position: relative;
+  /* generate-sprites.py's MARBLE_CORNER_CUT and TableScene's FIELD_CHAMFER_RATIO, both 7/22:
+     the diagonal cut every field and every marble on the board shares. */
+  --chamfer: polygon(
+    31.8% 0%, 68.2% 0%, 100% 31.8%, 100% 68.2%,
+    68.2% 100%, 31.8% 100%, 0% 68.2%, 0% 31.8%
+  );
+  /* generate-sprites.py's PALETTE['marble_border'] - the ink board fields are outlined in. */
+  --field-edge: #0a080a;
 }
 
-.rules-track__cells {
+.rules-track__slots {
   display: flex;
 }
 
-.rules-track__cell {
+.rules-track__slot {
   flex: 1 1 0;
   aspect-ratio: 1;
-  background: var(--bg-panel);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-dim) 45%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.rules-track__cell--kennel {
-  background: var(--bg-deep);
-  box-shadow: inset 0 0 0 2px var(--ink-dim);
+/* The board's own tile sprites, not a CSS lookalike: bevelled highlight top-left, shadow
+   bottom-right, straight out of generate-sprites.py's make_tile. */
+.rules-track__tile {
+  /* Several fields here overflow their slot on purpose, and the slot is a flex container -
+     without this the browser shrinks anything wider than the slot back to fit, and the kennel
+     socket silently loses the overhang that makes it a socket. */
+  flex: 0 0 auto;
+  width: 39.8%;
+  aspect-ratio: 1;
+  background-image: var(--tile);
+  background-size: 100% 100%;
+  image-rendering: pixelated;
 }
 
-.rules-track__cell--start {
-  box-shadow: inset 0 0 0 2px var(--ink);
+/* Chamfered socket with a dark rim. The outer box IS the rim and ::before is the fill,
+   because clip-path cuts a border away rather than shaping it. */
+.rules-track__field {
+  flex: 0 0 auto;
+  aspect-ratio: 1;
+  position: relative;
+  background: var(--field-edge);
+  clip-path: var(--chamfer);
 }
 
-.rules-track__cell--home {
-  background: var(--bg-raised);
+/* --field-fill must be OPAQUE. The outer box paints the rim colour across the whole shape and
+   this covers all but its edge, so a translucent fill lets the rim colour flood the middle -
+   which turned the goal slots into solid discs of the player's colour instead of outlines.
+   Where the board fills with alpha, pre-composite it against the stage instead (see --goal). */
+.rules-track__field::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  background: var(--field-fill);
+  clip-path: var(--chamfer);
 }
 
-.rules-track--home-lit .rules-track__cell--home {
-  box-shadow: inset 0 0 0 2px var(--ink);
+.rules-track__field--kennel {
+  width: 106.4%;
+  --field-fill: var(--bg-raised);
+}
+
+/* The only place a player's colour touches board chrome, and it is an OUTLINE, not a disc:
+   TableScene strokes the goal polygon in the owner's colour over a fill of PALETTE.ink at
+   0.16, which against the board reads as barely lighter than the background. That 0.16 is
+   baked into a flat colour here rather than left translucent - see the note above ::before. */
+.rules-track__field--goal {
+  width: 85.1%;
+  --field-edge: color-mix(in srgb, var(--goal-edge) 85%, transparent);
+  --field-fill: color-mix(in srgb, var(--ink) 16%, var(--bg-deep));
 }
 
 .rules-track__fx {
@@ -2103,69 +2160,87 @@ canvas {
   pointer-events: none;
 }
 
-@keyframes rules-trail {
-  0% {
+@keyframes rules-trail-in {
+  from {
     opacity: 0;
-  }
-  30% {
-    opacity: 0.62;
-  }
-  100% {
-    opacity: 0.2;
   }
 }
 
-
-/* Staggered by walk order (--trail-i), so the path draws itself in the direction the marble
-   actually travelled - which is how the backward 4 reads as backward at all. */
+/* A marble's walked path, in that marble's own colour, at TableScene's TRAIL_ALPHA and
+   TRAIL_SIZE_RATIO and in the same chamfered silhouette. Each mark drops as the marble
+   reaches its square - one WALK_STEP_MS apart - so the path draws itself at walking pace and
+   in the direction actually walked, which is what makes the backward 4 read as backward.
+   Unlike the board it then holds instead of fading: a demo frame is a still to be read, not
+   a live board where the next thing is about to happen. */
 .rules-track__trail {
   position: absolute;
   top: 0;
   aspect-ratio: 1;
-  background: var(--ink);
-  /* The resting look is a real declaration, not the animation's last keyframe held by a
-     forwards fill - an animation that never runs (a background tab, a blocked frame) must
-     still leave the diagram in its correct final state. `backwards` covers only the stagger
-     delay, holding the invisible start instead of flashing this value first. */
-  opacity: 0.2;
-  animation: rules-trail 900ms var(--ease-out-quart) backwards;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+  animation: rules-trail-in 60ms linear backwards;
   animation-delay: calc(var(--trail-i) * 55ms);
 }
 
-@keyframes rules-capture {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0;
+.rules-track__trail::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 56.2%;
+  aspect-ratio: 1;
+  background: var(--trail-color);
+  clip-path: var(--chamfer);
+}
+
+@keyframes rules-flash {
+  from {
+    opacity: 0.85;
   }
 }
 
-.rules-track__capture {
+/* TableScene marks both a capture and a home arrival with a plain white rectangle that fades
+   out - no chamfer there either. Here they rest faint rather than vanishing, so a paused
+   frame still shows where it happened. */
+.rules-track__capture,
+.rules-track__home-flash {
   position: absolute;
   top: 0;
+  opacity: 0.14;
+  animation: rules-flash 380ms cubic-bezier(0.215, 0.61, 0.355, 1) backwards;
+}
+
+.rules-track__capture {
   aspect-ratio: 1;
-  box-shadow: inset 0 0 0 3px var(--ink);
-  /* Rests dimmer than it blinks, so the square a capture happened on stays marked without
-     reading as a second start square (the only other cell with a solid white ring). */
-  opacity: 0.5;
-  animation: rules-capture 300ms steps(1, end) 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 1.4x the marble, matching playHomeArrival's flash rect - it deliberately spills past the
+   square it marks. */
+.rules-track__capture::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 109.2%;
+  aspect-ratio: 1;
+  background: var(--ink);
+}
+
+.rules-track__home-flash {
+  bottom: 0;
+  background: var(--ink);
 }
 
 @keyframes rules-marble-in {
   from {
-    transform: scale(0.2);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1);
-    opacity: 1;
+    transform: scale(0);
   }
 }
 
-/* steps(), not a smooth glide: the marble hops square to square, the same reading the board's
-   own path animation gives. Only `left` transitions - the mount animation owns transform. */
+/* POP_IN for a marble appearing for the first time, with Phaser's Back.easeOut overshoot.
+   Movement itself is driven inline from RulesDemo: a walk is linear at one square per
+   WALK_STEP_MS, everything else takes the board's 220ms Cubic.easeInOut tween. */
 .rules-track__marble {
   position: absolute;
   top: 0;
@@ -2173,8 +2248,21 @@ canvas {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: left 520ms steps(8, end);
-  animation: rules-marble-in 240ms var(--ease-out-quart);
+  animation: rules-marble-in 250ms cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+}
+
+/* The blanket reduced-motion rule at the top of this file zeroes durations but not delays,
+   and these carry long ones - the trail alone staggers over most of a second. */
+@media (prefers-reduced-motion: reduce) {
+  .rules-track__trail,
+  .rules-track__capture,
+  .rules-track__home-flash {
+    animation-delay: 0ms !important;
+  }
+
+  .rules-track__marble {
+    transition-delay: 0ms !important;
+  }
 }
 
 /* --- Card demo ------------------------------------------------------------ */
