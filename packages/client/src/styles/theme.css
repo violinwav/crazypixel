@@ -13,7 +13,7 @@
      Fonts and tokens - Base - Primitives - Hand panel and cards -
      Board overlay - Seven-split allocator - Rank picker and steal overlay -
      Steal presentation - Card flip animation - App shell and lobby -
-     Identity and color picker - Win screen - Emote HUD
+     Identity and color picker - Win screen - Emote HUD - How to Play
    =========================================================================== */
 
 /* ---------------------------------------------------------------------------
@@ -1830,4 +1830,417 @@ canvas {
   to {
     transform: translateY(0);
   }
+}
+
+/* ---------------------------------------------------------------------------
+   How to Play (RulesScreen.tsx / RulesDemo.tsx)
+
+   Monochrome throughout, like the rest of the chrome: the only colour on this
+   screen comes from the card sprites and the demo marbles, which are the two
+   things the page is actually about.
+   --------------------------------------------------------------------------- */
+
+/* The pregame flow is a phone-width column; the rules aren't. A demo strip is up to 19
+   squares wide, which at 480px leaves ~24px cells on a desktop for no reason. */
+.lobby--rules {
+  max-width: 720px;
+}
+
+.lobby__rules-btn {
+  width: 100%;
+}
+
+.rules__title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* Lobby focuses this heading on entry (tabIndex -1). Unlike the other screens' headings it is
+   visible, so it gets a real indicator rather than relying on the UA default. */
+.rules__title:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 4px;
+}
+
+.rules__motion {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.rules__section {
+  width: 100%;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.rules__lede {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.rules__list {
+  margin: 0;
+  padding-left: 1.4em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.rules__glossary {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.rules__glossary dt {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 0.75rem;
+  margin-top: var(--space-xs);
+}
+
+.rules__glossary dd {
+  margin: 0;
+  color: var(--ink-dim);
+}
+
+/* Card tabs. Deliberately smaller than .playing-card and NOT sharing its sizing formula: a
+   hand card's width is tied to the board's (see cardArt.ts's handCardWidthFor), and this row
+   of fourteen has nothing to do with a board. 44px wide keeps the touch target at spec even
+   though the art is half a real card's size. */
+.rules__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.rules__tab {
+  position: relative;
+  flex: 0 0 auto;
+  width: 44px;
+  aspect-ratio: 5 / 7;
+  padding: 0;
+  background-image: var(--card-face);
+  background-size: 100% 100%;
+  background-color: transparent;
+  image-rendering: pixelated;
+  border: none;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  transition: transform 120ms var(--ease-out-quart);
+}
+
+/* Wins on specificity over .playing-card__index's own 1.2rem regardless of source order - the
+   indices are shared with the full-size renderers and only the scale differs here. */
+.rules__tab .playing-card__index {
+  font-size: 0.7rem;
+}
+
+.rules__tab .playing-card__index--top {
+  top: 2px;
+  left: 3px;
+}
+
+.rules__tab .playing-card__index--bottom {
+  bottom: 2px;
+  right: 3px;
+}
+
+.rules__tab--selected {
+  transform: translateY(-6px);
+  outline: 3px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.rules__tab:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px var(--focus-ring-buffer);
+}
+
+.rules__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-top: var(--space-xs);
+}
+
+.rules__card-name {
+  margin: 0;
+  font-family: var(--cp-font-display);
+  font-size: 1rem;
+  letter-spacing: 1px;
+}
+
+.rules__card-summary {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.rules__note {
+  margin: 0;
+  padding-left: var(--space-xs);
+  border-left: 3px solid var(--ink-dim);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--ink-dim);
+}
+
+/* --- Demo stage ----------------------------------------------------------- */
+
+.rules-demo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.rules-demo__stage {
+  background: var(--bg-deep);
+  border: 2px solid var(--ink-dim);
+  padding: var(--space-sm);
+  overflow: hidden;
+}
+
+.rules-demo__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: rules-step;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.rules-demo__step-btn {
+  counter-increment: rules-step;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  min-height: var(--target-min-touch);
+  padding: var(--space-2xs) var(--space-xs);
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  color: var(--ink-dim);
+  font-family: var(--cp-font-body);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: color 150ms var(--ease-out-quart), background-color 150ms var(--ease-out-quart);
+}
+
+.rules-demo__step-btn::before {
+  content: counter(rules-step);
+  flex: 0 0 auto;
+}
+
+.rules-demo__step-btn:hover {
+  color: var(--ink);
+}
+
+.rules-demo__step-btn--current {
+  color: var(--ink);
+  background: var(--bg-raised);
+  border-left-color: var(--ink);
+}
+
+.rules-demo__step-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* --- Track demo ----------------------------------------------------------- */
+
+/* One lane, read left to right: kennel, the owner's start square, the track, then the home
+   stretch. A real board is a ring, but a ring at this size is a diagram of nothing - the
+   captions carry the "one full lap" part that the straight line can't. */
+.rules-track {
+  position: relative;
+}
+
+.rules-track__cells {
+  display: flex;
+}
+
+.rules-track__cell {
+  flex: 1 1 0;
+  aspect-ratio: 1;
+  background: var(--bg-panel);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-dim) 45%, transparent);
+}
+
+.rules-track__cell--kennel {
+  background: var(--bg-deep);
+  box-shadow: inset 0 0 0 2px var(--ink-dim);
+}
+
+.rules-track__cell--start {
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+
+.rules-track__cell--home {
+  background: var(--bg-raised);
+}
+
+.rules-track--home-lit .rules-track__cell--home {
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+
+.rules-track__fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+@keyframes rules-trail {
+  0% {
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.62;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}
+
+
+/* Staggered by walk order (--trail-i), so the path draws itself in the direction the marble
+   actually travelled - which is how the backward 4 reads as backward at all. */
+.rules-track__trail {
+  position: absolute;
+  top: 0;
+  aspect-ratio: 1;
+  background: var(--ink);
+  /* The resting look is a real declaration, not the animation's last keyframe held by a
+     forwards fill - an animation that never runs (a background tab, a blocked frame) must
+     still leave the diagram in its correct final state. `backwards` covers only the stagger
+     delay, holding the invisible start instead of flashing this value first. */
+  opacity: 0.2;
+  animation: rules-trail 900ms var(--ease-out-quart) backwards;
+  animation-delay: calc(var(--trail-i) * 55ms);
+}
+
+@keyframes rules-capture {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.rules-track__capture {
+  position: absolute;
+  top: 0;
+  aspect-ratio: 1;
+  box-shadow: inset 0 0 0 3px var(--ink);
+  /* Rests dimmer than it blinks, so the square a capture happened on stays marked without
+     reading as a second start square (the only other cell with a solid white ring). */
+  opacity: 0.5;
+  animation: rules-capture 300ms steps(1, end) 3;
+}
+
+@keyframes rules-marble-in {
+  from {
+    transform: scale(0.2);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* steps(), not a smooth glide: the marble hops square to square, the same reading the board's
+   own path animation gives. Only `left` transitions - the mount animation owns transform. */
+.rules-track__marble {
+  position: absolute;
+  top: 0;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: left 520ms steps(8, end);
+  animation: rules-marble-in 240ms var(--ease-out-quart);
+}
+
+/* --- Card demo ------------------------------------------------------------ */
+
+.rules-cards {
+  --mini-w: 46px;
+  --mini-h: 64px;
+  --lane-head: 18px;
+  position: relative;
+  height: calc(var(--lane-count) * (var(--mini-h) + var(--lane-head) + var(--space-md)) - var(--space-md));
+}
+
+.rules-cards__lane {
+  position: absolute;
+  left: 0;
+  top: calc(var(--lane) * (var(--mini-h) + var(--lane-head) + var(--space-md)));
+  font-size: 0.7rem;
+  line-height: var(--lane-head);
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.rules-cards__card {
+  position: absolute;
+  width: var(--mini-w);
+  height: var(--mini-h);
+  left: calc(var(--slot) * (var(--mini-w) + var(--space-xs)));
+  top: calc(var(--lane) * (var(--mini-h) + var(--lane-head) + var(--space-md)) + var(--lane-head));
+  transition: left 420ms var(--ease-out-quart), top 420ms var(--ease-out-quart);
+}
+
+.rules-cards__card--highlight {
+  outline: 3px solid var(--ink);
+  outline-offset: 3px;
+}
+
+@keyframes rules-card-flip {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.rules-cards__face {
+  position: absolute;
+  inset: 0;
+  background-image: var(--card-face);
+  background-size: 100% 100%;
+  image-rendering: pixelated;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+  animation: rules-card-flip 260ms var(--ease-out-quart);
+}
+
+.rules-cards__face .playing-card__index {
+  font-size: 0.72rem;
+}
+
+.rules-cards__face .playing-card__index--top {
+  top: 3px;
+  left: 3px;
+}
+
+.rules-cards__face .playing-card__index--bottom {
+  bottom: 3px;
+  right: 3px;
 }

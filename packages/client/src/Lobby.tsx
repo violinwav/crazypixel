@@ -11,6 +11,7 @@ import { PlayerSetupPicker, defaultColors } from './PlayerSetupPicker';
 import type { PlayerSetup } from './PlayerSetupPicker';
 import { PlayerIdentity } from './PlayerIdentity';
 import { WaitingRoom } from './WaitingRoom';
+import { RulesScreen } from './RulesScreen';
 import { createRoom, joinRoom } from './game/network';
 import type { RoomState, OnlineSession } from './game/network';
 import type { PlayerIdentity as Identity } from './game/playerIdentity';
@@ -30,6 +31,7 @@ type Screen =
   | { kind: 'menu' }
   | { kind: 'hostSettings' }
   | { kind: 'singleplayer' }
+  | { kind: 'rules' }
   | { kind: 'connecting' }
   | { kind: 'waiting'; room: Room<RoomState>; isHost: boolean };
 
@@ -145,6 +147,13 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
         >
           Singleplayer
         </button>
+        <button
+          type="button"
+          className="cp-button cp-button--ghost lobby__rules-btn"
+          onClick={() => setScreen({ kind: 'rules' })}
+        >
+          How to Play
+        </button>
       </>
     );
   } else if (screen.kind === 'hostSettings') {
@@ -184,6 +193,15 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
         </button>
       </>
     );
+  } else if (screen.kind === 'rules') {
+    body = (
+      <>
+        <button type="button" className="cp-button cp-button--ghost lobby__back" onClick={() => setScreen({ kind: 'menu' })}>
+          ‹ Back
+        </button>
+        <RulesScreen hue={identity.hue} headingRef={headingRef} />
+      </>
+    );
   } else if (screen.kind === 'connecting') {
     body = (
       <p className="lobby__hint" role="status" ref={connectingRef} tabIndex={-1}>Connecting…</p>
@@ -193,7 +211,9 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
   }
 
   return (
-    <main className="lobby">
+    /* The rules screen needs more room than the pregame flow's phone-width column - the card
+       demos read as a strip of squares and get unusably small at 480px on a desktop. */
+    <main className={`lobby${screen.kind === 'rules' ? ' lobby--rules' : ''}`}>
       <h1 className="cp-title lobby__title">CRAZYPIXEL</h1>
       <PlayerIdentity identity={identity} onChange={onIdentityChange} />
       {/* Keyed on screen.kind so React remounts this div - and only this div, never the identity
