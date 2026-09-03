@@ -37,11 +37,22 @@ export function MarbleColorPicker({ label, hue, onChange, size, align = 'start' 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
     };
+    // Closes on focus leaving the widget too, not just a pointer click outside it - without
+    // this, a keyboard user tabbing forward out of the open panel left it visually open,
+    // covering whatever sits right below in the layout (harmless when that was always just the
+    // next seat's row, but PlayerSetupPicker now puts this seat's own difficulty controls there).
+    const handleFocusOut = (e: FocusEvent) => {
+      const next = e.relatedTarget as Node | null;
+      if (rootRef.current && (!next || !rootRef.current.contains(next))) setOpen(false);
+    };
     document.addEventListener('mousedown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
+    rootRef.current?.addEventListener('focusout', handleFocusOut);
+    const root = rootRef.current;
     return () => {
       document.removeEventListener('mousedown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
+      root?.removeEventListener('focusout', handleFocusOut);
     };
   }, [open]);
 

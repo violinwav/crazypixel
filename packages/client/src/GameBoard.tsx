@@ -99,8 +99,9 @@ interface Props {
   /** Display names by seat - online only. Undefined for local hotseat, which has no
    * display-name concept; everything falls back to "Player N". */
   playerNames?: string[];
-  /** Server epoch ms when the current turn auto-plays - online only. Undefined for local
-   * hotseat, which has no server to enforce a timeout and so shows no timer. */
+  /** Epoch ms when the current turn auto-plays. Online: the server's clock. Local singleplayer:
+   * a client-computed one (see useSingleplayerAutopilot.ts) - undefined only when a human turn's
+   * timer has been switched off in the setup screen. */
   turnDeadline?: number;
   /** Reports the app-wide dither background this board wants while active: visible only on the
    * viewer's own turn, tinted the current player's color. A side effect rather than a return

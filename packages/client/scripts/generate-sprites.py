@@ -238,6 +238,116 @@ def generate_marbles():
 
 
 # ---------------------------------------------------------------------------
+# Bot difficulty faces (PlayerSetupPicker's singleplayer setup). A settings-screen icon, not a
+# marble or card, so - per the monochrome-UI-chrome rule above - these stay ink-on-dark rather
+# than picking up a player hue. Friendly-to-evil reads entirely from SHAPE (eyebrow angle, mouth
+# curve, horns only on the hard face), never color. Reuses make_marble's chamfered-square
+# silhouette for the head (this app's one house style for "a small rounded-but-not-round piece")
+# without its player-color fill/facet - a face has no material to shade, just an outline and
+# features drawn on top the same way the suit icons build a shape from per-row fill_range calls.
+# ---------------------------------------------------------------------------
+
+FACE_SIZE = 18
+FACE_CORNER_CUT = 6
+FACE_TOP_MARGIN = 3  # canvas rows reserved above the head, for the hard face's horns
+
+
+def _face_canvas():
+    return new_canvas(FACE_SIZE, FACE_SIZE + FACE_TOP_MARGIN)
+
+
+def _draw_head(g):
+    inner = FACE_SIZE - 1
+    border = PALETTE["marble_border"]
+    fill = PALETTE["ink"]
+
+    def head_filled(x, y):
+        return _chamfered(x, y, inner, FACE_CORNER_CUT)
+
+    for y in range(FACE_SIZE):
+        for x in range(FACE_SIZE):
+            if not head_filled(x, y):
+                continue
+            on_edge = not (
+                head_filled(x - 1, y) and head_filled(x + 1, y)
+                and head_filled(x, y - 1) and head_filled(x, y + 1)
+            )
+            set_px(g, x, y + FACE_TOP_MARGIN, border if on_edge else fill)
+
+
+def _draw_horns(g):
+    # Two small dark nubs breaking the top edge, in the margin band above the head - the one
+    # feature unique to the hard face.
+    border = PALETTE["marble_border"]
+    fill_range(g, 0, 3, 3, border)
+    fill_range(g, 0, 14, 14, border)
+    fill_range(g, 1, 2, 4, border)
+    fill_range(g, 1, 13, 15, border)
+    fill_range(g, 2, 2, 5, border)
+    fill_range(g, 2, 12, 15, border)
+
+
+def make_bot_face(difficulty):
+    g = _face_canvas()
+    _draw_head(g)
+    if difficulty == "hard":
+        _draw_horns(g)
+
+    feature = PALETTE["marble_border"]
+    top = FACE_TOP_MARGIN
+
+    if difficulty == "easy":
+        # Brows raised (relaxed) and a wide smile - the mouth's ends sit HIGHER (a smaller row
+        # number) than its center, the same outward-and-up curve construction the suit icons use
+        # for a rounded silhouette, just for a mouth instead of a heart's lobes.
+        fill_range(g, top + 4, 4, 6, feature)
+        fill_range(g, top + 4, 11, 13, feature)
+        fill_range(g, top + 8, 5, 6, feature)
+        fill_range(g, top + 8, 11, 12, feature)
+        fill_range(g, top + 9, 5, 6, feature)
+        fill_range(g, top + 9, 11, 12, feature)
+        fill_range(g, top + 11, 5, 5, feature)
+        fill_range(g, top + 11, 12, 12, feature)
+        fill_range(g, top + 12, 6, 7, feature)
+        fill_range(g, top + 12, 10, 11, feature)
+        fill_range(g, top + 13, 8, 9, feature)
+    elif difficulty == "medium":
+        # Flat brows, flat mouth - the neutral baseline between easy's smile and hard's frown.
+        fill_range(g, top + 5, 4, 6, feature)
+        fill_range(g, top + 5, 11, 13, feature)
+        fill_range(g, top + 8, 5, 6, feature)
+        fill_range(g, top + 8, 11, 12, feature)
+        fill_range(g, top + 9, 5, 6, feature)
+        fill_range(g, top + 9, 11, 12, feature)
+        fill_range(g, top + 12, 6, 11, feature)
+    else:  # hard
+        # Brows slant down toward the center (three rows, narrowing inward - a V), eyes squint to
+        # a single row, and the mouth mirrors easy's smile with the curve inverted: ends sit
+        # LOWER than the center, a frown.
+        fill_range(g, top + 4, 4, 5, feature)
+        fill_range(g, top + 4, 12, 13, feature)
+        fill_range(g, top + 5, 5, 6, feature)
+        fill_range(g, top + 5, 11, 12, feature)
+        fill_range(g, top + 6, 6, 7, feature)
+        fill_range(g, top + 6, 10, 11, feature)
+        fill_range(g, top + 9, 5, 6, feature)
+        fill_range(g, top + 9, 11, 12, feature)
+        fill_range(g, top + 12, 8, 9, feature)
+        fill_range(g, top + 13, 6, 7, feature)
+        fill_range(g, top + 13, 10, 11, feature)
+        fill_range(g, top + 14, 5, 5, feature)
+        fill_range(g, top + 14, 12, 12, feature)
+
+    return g
+
+
+def generate_bot_faces():
+    for difficulty in ("easy", "medium", "hard"):
+        upscale(make_bot_face(difficulty), 3).save(os.path.join(OUT_DIR, f"bot-face-{difficulty}.png"))
+    print("bot faces: ok")
+
+
+# ---------------------------------------------------------------------------
 # Card back: monochrome panel, white double border, offset dot pattern, diamond emblem.
 # Sized to match the faces below, so hand, deck stack and discard pile agree.
 # ---------------------------------------------------------------------------
@@ -426,6 +536,7 @@ def generate_tiles():
 if __name__ == "__main__":
     generate_suits()
     generate_marbles()
+    generate_bot_faces()
     generate_card_back()
     generate_card_faces()
     generate_tiles()

@@ -851,6 +851,28 @@ body {
   text-align: center;
 }
 
+/* Only rendered when PixelSlider gets a valueLabel (a qualitative reading like "Medium") - the
+   plain single-label rule above is untouched, so the existing SevenSplitOverlay caller (no
+   valueLabel) renders identically to before this was added. */
+.pixel-slider__label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  margin-bottom: 4px;
+}
+
+.pixel-slider__label-row .pixel-slider__label {
+  margin-bottom: 0;
+  text-align: left;
+}
+
+.pixel-slider__value {
+  font-size: 0.75rem;
+  font-weight: bold;
+  color: var(--ink);
+}
+
 .pixel-slider__body {
   position: relative;
   height: 30px;
@@ -1202,6 +1224,14 @@ canvas {
 
 .lobby__seat {
   display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+/* Label + color picker - was .lobby__seat's own layout before a bot seat could also need a
+   second line underneath for its difficulty control (.lobby__seat-bot below). */
+.lobby__seat-row {
+  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-xs);
@@ -1213,6 +1243,25 @@ canvas {
 
 .lobby__seat-partner {
   color: var(--ink-dim);
+}
+
+/* Bot difficulty slider + face, one seat's second line - only rendered for seats > 0. */
+.lobby__seat-bot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.lobby__seat-bot .pixel-slider {
+  flex: 1;
+  min-width: 0;
+}
+
+.lobby__seat-bot-face {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  image-rendering: pixelated;
 }
 
 /* The join-code row is a <form> around the code input and submit only - Host and Singleplayer

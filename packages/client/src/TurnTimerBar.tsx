@@ -29,16 +29,22 @@ function fillColorFor(fraction: number): string {
 }
 
 interface Props {
-  /** Server epoch ms when the current turn auto-plays. This bar is cosmetic - the server is
-   * what enforces the timeout, so a client running slightly fast or slow just sees the bar
-   * empty a beat early or late, never a wrong outcome. */
+  /** Epoch ms when the current turn auto-plays - the server's clock online, a locally computed
+   * one in singleplayer (see useSingleplayerAutopilot.ts). This bar is cosmetic - whichever
+   * clock owns the timeout is what enforces it, so a client running slightly fast or slow just
+   * sees the bar empty a beat early or late, never a wrong outcome. */
   deadline: number;
 }
 
 /**
  * A thin countdown strip pinned above the hand panel, shrinking from full to empty as the
- * deadline approaches - reversed from a normal loading bar. Online only; local hotseat has no
- * server to enforce a timeout and shows no timer at all.
+ * deadline approaches - reversed from a normal loading bar. Local singleplayer shows it too now
+ * that it has its own (client-side) turn clock; still absent only when a human turn's timer is
+ * switched off in the setup screen (see PlayerSetupPicker's turnTimerEnabled).
+ *
+ * Every turn's bar is the same TURN_MS length, including a bot's - a bot simply commits early
+ * and the turn moves on with the bar part-drained, the same as a fast human online. Nothing here
+ * needs to know a bot is acting.
  */
 export function TurnTimerBar({ deadline }: Props) {
   const [now, setNow] = useState(() => Date.now());

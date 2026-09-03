@@ -7,7 +7,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { Room } from 'colyseus.js';
 import type { GameMode } from '@crazypixel/shared';
-import { PlayerSetupPicker, defaultColors } from './PlayerSetupPicker';
+import { PlayerSetupPicker, defaultColors, defaultBots } from './PlayerSetupPicker';
 import type { PlayerSetup } from './PlayerSetupPicker';
 import { PlayerIdentity } from './PlayerIdentity';
 import { WaitingRoom } from './WaitingRoom';
@@ -44,6 +44,8 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
   const [setup, setSetup] = useState<PlayerSetup>({
     config: { playerCount: 4, mode: 'ffa' },
     colors: defaultColors(4),
+    bots: defaultBots(4),
+    turnTimerEnabled: true,
   });
 
   const joinCodeId = useId();

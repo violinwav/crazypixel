@@ -123,6 +123,12 @@ export function HandPanel({ state, player, interactive, selectedCardId, onSelect
               // semantics for assistive tech while staying a real, transitionable element - the
               // click guard below is what actually blocks the illegal play.
               aria-disabled={!hasMoves}
+              // A card with no legal move stays a real focusable element (see the aria-disabled
+              // comment above) but shouldn't stay a TAB stop - previously only reachable when
+              // hasMoves was false during someone else's fixed hand online; fixed mySeat now
+              // makes this the default state for most of a local bot's turn too, so a keyboard/
+              // screen-reader user would otherwise hit a wall of dead buttons every bot turn.
+              tabIndex={hasMoves ? 0 : -1}
               onClick={() => {
                 if (!hasMoves) return;
                 onSelectCard(isSelected ? null : card.id);
