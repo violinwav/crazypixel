@@ -781,6 +781,14 @@ body {
   animation: board-target-pulse 1.4s ease-in-out infinite;
 }
 
+/* The path of the marble the 7-split slider is currently driving, told apart from the other
+   allocated marbles' dots (SevenSplitOverlay). Blue matches .board-overlay__figure--active and
+   .seven-rail__chip--active, so ring, chip and path all point at one marble. */
+.board-overlay__path-dot--active {
+  background: var(--player-blue);
+  box-shadow: 0 0 6px var(--player-blue);
+}
+
 /* A square the 7 burns on its way through - only the 7 captures mid-path, every other card
    captures on its landing square, which is the tap target rather than a dot. Same red as the
    capture ring, glowing so it reads as a kill and not just another walked square. */
@@ -793,34 +801,166 @@ body {
    Seven-split allocator (SevenSplitOverlay.tsx / PixelSlider.tsx)
    --------------------------------------------------------------------------- */
 
-/* Slider, status line and actions are anchored to the board's bottom edge as one stacked
-   panel, rather than floating in the ring's empty middle where they read as a second UI layer
-   competing for the same central spot. The actions row in particular clears the draw/discard
-   stacks, which occupy the very bottom. */
-.seven-slider {
+/* One rail docked to the board's right edge, bottom-anchored to the same clearance token that
+   keeps everything else off the turn label and timer - so the slider starts directly above the
+   hand panel and runs upward, in a fixed place that does not move as the allocation changes.
+   `top` bounds it as well as `bottom`: the chip list and slider then shrink to whatever board
+   height is left rather than growing off the top of a short screen.
+
+   It sits over board art, including marble rings near 3 o'clock - the chip list is what makes
+   that acceptable, since every eligible marble stays reachable there whether or not its ring
+   on the board is covered. */
+.seven-rail {
   position: absolute;
-  left: 50%;
-  bottom: 160px;
-  transform: translateX(-50%);
-  width: min(94%, 320px);
+  right: var(--space-xs);
+  bottom: var(--board-bottom-clearance);
+  /* Bounded rather than stretched to the top: the box hugs its controls, so the rail is a
+     small docked block in the corner instead of a full-height column of empty border. The cap
+     is what makes the chip list and slider shrink on a short board rather than run off the top
+     of it. */
+  max-height: calc(100% - var(--board-bottom-clearance) - var(--space-md));
+  /* INVARIANT: width + right offset must stay under ~100px. A track marble at 3 o'clock has
+     its button's left edge at `W/2 + trackRadius - 22`, and computeBoardGeometry clamps
+     trackRadius to about 0.29W - so past ~100px the rail starts covering one of those buttons
+     ENTIRELY, which is the line between WCAG 2.4.11 passing and failing. At 72px the worst
+     case clips about 8px off a 44px button and its focus ring stays visible. */
+  width: 64px;
+  display: flex;
+  flex-direction: column;
+  /* Contents stack up from the bottom edge, so the slider's foot stays pinned there and any
+     spare height opens above the chips instead of between the controls. */
+  justify-content: flex-end;
+  align-items: stretch;
+  gap: var(--space-xs);
+  /* 8px inline, not 6: a focused chip's ring plus its dark buffer needs room to read as a ring
+     rather than as this panel's own border getting thicker. */
+  padding: var(--space-xs) 8px;
+  /* Reads as docked chrome rather than three loose controls floating over the board. Kept
+     translucent so a marble underneath is still visible even where it can't be tapped. */
+  background: rgba(0, 0, 0, 0.72);
+  border: 2px solid var(--ink);
   pointer-events: auto;
 }
 
-.board-overlay__seven-status {
-  position: absolute;
-  left: 50%;
-  bottom: 128px;
-  transform: translateX(-50%);
-  margin: 0;
-  font-size: 0.85rem;
+.seven-rail__marbles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Last resort only - see the shrink weighting on .seven-rail__slider. min-height:0 lets a
+     flex item shrink below its content at all, and the overflow makes what's left scrollable
+     rather than silently clipped: a marble no longer reachable in this list is one that may
+     also be hidden behind the rail on the board. */
+  /* Never collapses to nothing. On a landscape board the rail's cap is barely taller than the
+     slider's floor, and without this the list shrank to zero height - scrollable in theory,
+     but with no chip visible to scroll, and every marble behind the rail unreachable. */
+  min-height: 28px;
+  overflow-y: auto;
+}
+
+/* Position on the left, running count on the right - the count is the number the slider is
+   changing, so it sits nearest the slider below it. */
+.seven-rail__chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  flex: 0 0 auto;
+  /* Under the 44px floor the rest of this file uses, deliberately: four chips at 44px plus a
+     usable slider does not fit a phone's board area, and the slider is the control the player
+     actually drags. 28px is the floor here, not a number to keep trimming - it clears the
+     24px WCAG 2.5.8 AA minimum by 4px, and the 4px gaps keep the spacing exception satisfied.
+     Anything below 24px fails outright. */
+  min-height: 28px;
+  padding: 0 4px;
+  background: transparent;
+  border: 2px solid var(--ink-dim);
   color: var(--ink-dim);
-  pointer-events: none;
+  font-family: var(--cp-font-display);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.seven-rail__chip-steps {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+/* Same --player-blue as .board-overlay__figure--active, so the chip and the ring still on the
+   board name the same marble as the selected one. */
+.seven-rail__chip--active {
+  border-color: var(--player-blue);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* --focus-ring is --ink and so is .seven-rail's border, so a bare ring on a chip 8px from that
+   border just reads as the panel edge thickening. The dark buffer between them is the same fix
+   .cp-button already uses. */
+.seven-rail__chip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--focus-ring-buffer);
+}
+
+.seven-rail__total {
+  margin: 0;
+  text-align: center;
+  font-family: var(--cp-font-display);
+  font-size: 0.75rem;
+  color: var(--ink-dim);
+}
+
+.seven-rail__slider {
+  /* The 220px is a flex BASIS, not a grow target: .seven-rail is sized by its content, so
+     there is no free space for flex-grow to hand out and a basis of `auto` would leave this
+     sitting on its own min-height forever. Stated as a basis, the rail grows to fit it, and
+     flex-shrink is what gives the height back on a board too short for the full rail - down to
+     a floor that still fits eight notches legibly. Longest control in the rail on purpose:
+     it's the one under the player's thumb, and a longer throw is finer control over the count. */
+  /* Shrinks 20x harder than the chip list, weighted against its own basis: on a board too
+     short for the full rail the height comes out of the slider first, all the way down to its
+     floor, and only then does the chip list start hiding marbles. Losing slider travel costs
+     precision; losing a chip costs access to a marble. Not flex-shrink:0 on the list, which
+     would trade a 2px clip in the common case for the rail overflowing its own box in
+     landscape, where the board area is barely taller than the rail. */
+  flex: 1 20 220px;
+  min-height: 150px;
+  display: flex;
+}
+
+/* Stands in for the slider at the same size, so switching between a marble that can still
+   take steps and one that can't doesn't resize the rail under the player's finger. */
+.seven-rail__spent {
+  /* Must track .seven-rail__slider's sizing exactly, or the rail resizes on selection. */
+  flex: 1 20 220px;
+  min-height: 150px;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--ink-dim);
+  color: var(--ink-dim);
+  font-family: var(--cp-font-display);
+  font-size: 1rem;
+}
+
+/* Landscape phones, where the board area is barely taller than the rail itself. The slider's
+   normal floor plus one chip already exceeds the rail's cap there, so the floor has to come
+   down or the rail overflows its own box upward. A short throw is worse than a long one; a
+   rail spilling over the board is worse than both. */
+@media (max-height: 520px) {
+  .seven-rail__slider,
+  .seven-rail__spent {
+    min-height: 96px;
+  }
 }
 
 .board-overlay__seven-actions {
   position: absolute;
   left: 50%;
-  bottom: 96px;
+  /* Bottom-center is free now that the slider moved to the rail, so confirm sits at the
+     shortest reach from the hand panel instead of stacked three controls up. */
+  bottom: var(--board-bottom-clearance);
   transform: translateX(-50%);
   display: flex;
   gap: 8px;
@@ -838,6 +978,14 @@ body {
 .board-overlay__seven-confirm {
   border-color: var(--card-red);
   color: var(--card-red);
+}
+
+/* aria-disabled, not `disabled` - the button stays focusable and announces its state, so this
+   is the only thing that has to say "not yet" visually. */
+.board-overlay__seven-confirm[aria-disabled='true'] {
+  border-color: var(--ink-dim);
+  color: var(--ink-dim);
+  cursor: not-allowed;
 }
 
 /* A real <input type="range"> for keyboard and screen-reader semantics, hidden with opacity
@@ -914,6 +1062,48 @@ body {
 .pixel-slider:focus-within .pixel-slider__track {
   outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+/* Vertical variant, for the 7-split rail. `writing-mode: vertical-lr` is what actually makes
+   the native range vertical - drag axis, Up/Down arrow mapping and the AT orientation all come
+   from it, which the old `-webkit-appearance: slider-vertical` never gave. `direction: rtl`
+   puts min at the BOTTOM; without it a vertical range counts down from the top and the
+   invisible input would drag opposite to the notches it is meant to be filling. */
+.pixel-slider--vertical {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pixel-slider--vertical .pixel-slider__label {
+  /* The label names one specific marble ("Steps for Marble on square 12") and there is no room
+     for that string in a 60px rail - the chip above already carries that identity visually, so
+     this stays as the input's accessible name only. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.pixel-slider--vertical .pixel-slider__body {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  width: 100%;
+}
+
+.pixel-slider--vertical .pixel-slider__input {
+  writing-mode: vertical-lr;
+  direction: rtl;
+}
+
+.pixel-slider--vertical .pixel-slider__track {
+  /* column-reverse, not column: the first notch is the lowest value and belongs at the foot of
+     the track, matching where `direction: rtl` puts the input's own minimum. */
+  flex-direction: column-reverse;
 }
 
 /* ---------------------------------------------------------------------------

@@ -13,6 +13,23 @@ interface Props {
    * changing value into the accessible NAME itself) and set as the input's aria-valuetext, so a
    * sighted glance and a screen reader both get the word instead of a bare position index. */
   valueLabel?: string;
+  /** Vertical runs the track bottom-to-top (min at the bottom), for the 7-split's right-edge
+   * rail. The drag axis and arrow mapping come from `writing-mode: vertical-lr` in CSS, not
+   * from anything here - verified in-browser: ArrowUp raises the value and a click near the
+   * track's top sets the max.
+   *
+   * That property on a range needs Chrome 121 / Firefox 129 / Safari 17.4. Below those the
+   * input keeps a HORIZONTAL drag axis under a vertical row of notches, and since the input
+   * is opacity:0 there is no visual sign the real axis is perpendicular to the drag. The
+   * pre-2024 alternative (`-webkit-appearance: slider-vertical`) is not a fallback - it was
+   * removed in the same Chrome release that added this. A `transform: rotate(-90deg)` shim is
+   * the way back if those browsers ever have to be supported. */
+  orientation?: 'horizontal' | 'vertical';
+  /** aria-valuetext without any visible counterpart, unlike valueLabel - for a slider whose
+   * value only means something alongside context that doesn't fit beside it (the 7-split's
+   * running total and capture warning in a 64px rail). Wins over valueLabel when both are set.
+   * Must never be empty: valuetext REPLACES the spoken value, so a blank one silences it. */
+  valueText?: string;
 }
 
 /**
@@ -21,12 +38,13 @@ interface Props {
  * input stays interactive (opacity 0, not display:none) so dragging, arrow keys and focus all
  * still work; the notches are decorative and stay in sync because both read the same `value`.
  */
-export function PixelSlider({ label, min, max, value, onChange, valueLabel }: Props) {
+export function PixelSlider({ label, min, max, value, onChange, valueLabel, valueText, orientation = 'horizontal' }: Props) {
+  const vertical = orientation === 'vertical';
   const id = useId();
   const notches = Array.from({ length: max - min + 1 }, (_, i) => min + i);
 
   return (
-    <div className="pixel-slider">
+    <div className={`pixel-slider${vertical ? ' pixel-slider--vertical' : ''}`}>
       {valueLabel ? (
         // Only wrapped when there's a value to show beside it - keeps the existing
         // SevenSplitOverlay caller's markup (and its centered label) byte-for-byte unchanged.
@@ -46,7 +64,10 @@ export function PixelSlider({ label, min, max, value, onChange, valueLabel }: Pr
           max={max}
           step={1}
           value={value}
-          aria-valuetext={valueLabel}
+          aria-valuetext={valueText ?? valueLabel}
+          // role=slider defaults to horizontal and browsers don't reliably derive the axis
+          // from writing-mode, so the vertical case has to say so itself.
+          aria-orientation={vertical ? 'vertical' : undefined}
           onChange={(e) => onChange(Number(e.target.value))}
         />
         <div className="pixel-slider__track" aria-hidden="true">
