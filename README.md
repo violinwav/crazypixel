@@ -2,8 +2,8 @@
 
 A pixel-art web clone of **Brändi Dog** (the Swiss marble-race card game) with a set of
 "crazy" house rules layered on top — split sevens, a wild joker, blind steals, and more.
-Built as a monorepo: a pure TypeScript rules engine, a React + Phaser client, and a Colyseus
-server skeleton for future online play.
+Built as a monorepo: a pure TypeScript rules engine, a React + Phaser client, and a
+server-authoritative Colyseus server for online play.
 
 > Not affiliated with Stiftung Brändi. Game rules aren't copyrightable, so the mechanics are
 > reimplemented from scratch here — but the name, art, and copy are original to this project,
@@ -11,15 +11,23 @@ server skeleton for future online play.
 
 ## Play it
 
-Local hotseat only for now — 2, 4, or 6 players pass one device around.
-
 ```bash
 npm install
-npm run dev:client
+npm run dev:client     # http://localhost:5173
+npm run dev:server     # ws://localhost:2567 — only needed for online play
 ```
 
-Open `http://localhost:5173`, pick a player count and mode (free-for-all or 2v2 partners),
-and start playing.
+Three ways to play, all from the same menu:
+
+- **Singleplayer** — pick a player count (2/3/4/6), fill any seat with an easy, medium, or
+  hard bot, and play the rest yourself. Leaving every other seat human makes it a hotseat
+  game on one device.
+- **Host** — start an online room and share the four-digit code. The room adapts to however
+  many people actually join; the host presses Start when everyone's seated.
+- **Join** — type a friend's code.
+
+Your display name and marble color persist across visits, so they're already filled in next
+time.
 
 ## The rules
 
@@ -41,46 +49,67 @@ other marbles. Landing on an opponent sends their marble straight back to their 
 player with no legal move for any card in hand discards their whole hand and sits out until
 the next round's redeal.
 
+An in-game **How to play** screen covers every card with an animated diagram on a miniature
+board, backed by the same explanation as a written, scrubbable step list — so none of the
+above has to be read from this file to start playing.
+
 ## Stack
 
 ```
 packages/shared   pure TypeScript rules engine — deck, board, legal-move generation, move
-                   application. No rendering, no network. Framework-agnostic by design so
-                   the same engine can run authoritatively on a future server.
+                  application. No rendering, no network. The client and the server both run
+                  this same engine, unmodified.
 
-packages/client    Vite + React + Phaser 3. React owns the lobby and the accessible DOM
-                   overlay (hand of cards, tap targets for legal moves); Phaser renders the
-                   board itself on a Canvas 2D renderer, hand-drawn pixel-art sprites
-                   generated procedurally (see below), no external art assets.
+packages/client   Vite + React + Phaser 3. React owns the lobby and the accessible DOM
+                  overlay (hand of cards, tap targets for legal moves); Phaser renders the
+                  board itself on a Canvas 2D renderer, with pixel-art sprites generated
+                  procedurally (see below), no external art assets.
 
-packages/server     Colyseus skeleton for future online multiplayer. Boots, but isn't wired
-                   to real games yet — see Status.
+packages/server   Colyseus. One room type, server-authoritative: a client's move is applied
+                  only if the shared engine actually offers it to that seat on its turn.
 ```
+
+Local and online games render through the same `GameBoard` component, fed either by a local
+state hook or by whatever the server broadcasts — so a rule can't behave differently in the
+two modes.
 
 ## Status
 
-**Playable today:** full local hotseat games for 2/4/6 players, free-for-all or 2v2 partners,
-with every house rule above implemented — deck/dealing, round-size cycling, capturing,
-blockades, home-stretch entry, and win detection.
+**Playable today:**
+
+- Full games for 2/3/4/6 players, free-for-all or 2v2 partners (partners needs an even count
+  of 4 or more), with every house rule above implemented — dealing, round-size cycling,
+  capturing, blockades, home-stretch entry, and win detection.
+- **Online multiplayer** — host/join by room code, hidden hands, a 20-second turn clock that
+  auto-plays a stalled seat, emotes, and a host-initiated rematch that re-deals to the same
+  table.
+- **Bots** — three difficulty levels, scoring only moves the engine already declared legal.
+- **Singleplayer turn clock** is optional (nothing is waiting on you), on by default online.
 
 **Not implemented:**
 
-- **Online multiplayer.** `packages/server` boots but isn't wired to real games — state isn't
-  yet expressed as `@colyseus/schema`, and no moves are routed through it. The shared engine
-  was written so this is additive, not a rewrite: a real game room would call the same
-  `getLegalMoves` / `applyMove` the client already uses locally.
-- **Card-passing sub-phase** (each player passes one card to their partner before a round
-  starts, in Partners mode) — a real rule, not yet wired to any UI.
+- **Reconnect after a disconnect.** A dropped seat freezes; the turn clock keeps the game
+  moving, but that player can't rejoin. If the host (seat 0) is the one who dropped, no one
+  can start a rematch.
+- **Spectators** and any **persistence** — rooms are in-memory and vanish when empty or when
+  the process restarts.
+- **Card-passing sub-phase** (each player passes one card to their partner before a round, in
+  Partners mode). The engine implements it (`passCard`, the `cardPass` phase); no UI reaches
+  it yet.
+- **Automated tests.** Rules-engine changes are currently verified with throwaway `npx tsx`
+  scripts rather than a checked-in suite.
 
 ## Design
 
 - Fully custom pixel-art UI: no component library, no external art. Cards, marbles, board
-  tiles, and the background are all procedurally generated or hand-styled.
+  tiles, and the background are all procedurally generated or hand-styled. One typeface
+  throughout — Departure Mono (`packages/client/public/fonts/`, SIL OFL).
 - Mobile-first — the whole board and hand panel are built to fit and stay tappable on a
   phone screen, not just scaled down from desktop.
 - Every legal move is a real, accessible `<button>` positioned over the board (not a Phaser
   canvas element) — the game is playable with a keyboard or a screen reader, not just a mouse
-  or a touchscreen.
+  or a touchscreen. Turn changes, captures, and emotes are announced through live regions,
+  and `prefers-reduced-motion` stops every transition and the dithered background loop.
 
 ### Sprite art
 
@@ -100,10 +129,19 @@ Output goes to `packages/client/public/sprites/`, loaded once at boot by `TableS
 ```bash
 npm install
 npm run dev:client     # client dev server, http://localhost:5173
-npm run dev:server     # server skeleton, ws://localhost:2567 (boots, not yet playable)
-npm run build           # builds shared, then client, then server
-npm run typecheck       # typechecks the shared package
+npm run dev:server     # game server, ws://localhost:2567
+npm run build          # builds shared, then client, then server
+npm run typecheck      # shared package only — see below
 ```
 
-The client and server packages typecheck on their own via `npx tsc --noEmit` inside each
-package directory (`packages/client`, `packages/server`).
+The client finds the server by deriving it from wherever the page was loaded (so a LAN IP or
+a forwarded-port tunnel works without configuration). Deployments that split the two across
+unrelated domains set `VITE_SERVER_URL` at build time.
+
+`npm run typecheck` covers `packages/shared` only. Typecheck the other two from inside their
+own package directories:
+
+```bash
+cd packages/client && npx tsc --noEmit
+cd packages/server && npx tsc --noEmit
+```
