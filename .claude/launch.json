@@ -4,8 +4,24 @@
     {
       "name": "client",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--workspace", "packages/client"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--workspace",
+        "packages/client"
+      ],
       "port": 5173
+    },
+    {
+      "name": "server",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--workspace",
+        "packages/server"
+      ],
+      "port": 2567
     }
   ]
 }

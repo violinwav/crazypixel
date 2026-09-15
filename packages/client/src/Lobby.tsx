@@ -11,6 +11,7 @@ import { PlayerSetupPicker, defaultColors, defaultBots } from './PlayerSetupPick
 import type { PlayerSetup } from './PlayerSetupPicker';
 import { PlayerIdentity } from './PlayerIdentity';
 import { WaitingRoom } from './WaitingRoom';
+import { ServerList } from './ServerList';
 import { RulesScreen } from './RulesScreen';
 import { createRoom, joinRoom } from './game/network';
 import type { RoomState, OnlineSession } from './game/network';
@@ -30,6 +31,7 @@ interface Props {
 type Screen =
   | { kind: 'menu' }
   | { kind: 'hostSettings' }
+  | { kind: 'browse' }
   | { kind: 'singleplayer' }
   | { kind: 'rules' }
   | { kind: 'connecting' }
@@ -72,16 +74,25 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
   const canJoin = name.length > 0 && joinCode.length === JOIN_CODE_LENGTH;
   const canHost = name.length > 0;
 
-  const handleJoin = () => {
-    if (!canJoin) return;
+  /**
+   * The one join path, whether the code was typed into the field or picked off the server
+   * browser. `from` is the screen a failure drops back to, so a browser join that races a game
+   * starting lands back on the list it came from rather than at the top menu.
+   */
+  const joinWithCode = (code: string, from: Screen) => {
     setJoinError(null);
     setScreen({ kind: 'connecting' });
-    joinRoom(joinCode, name, identity.hue)
+    joinRoom(code, name, identity.hue)
       .then((room) => setScreen({ kind: 'waiting', room, isHost: false }))
       .catch(() => {
-        setScreen({ kind: 'menu' });
+        setScreen(from);
         setJoinError('Room not found or full.');
       });
+  };
+
+  const handleJoin = () => {
+    if (!canJoin) return;
+    joinWithCode(joinCode, { kind: 'menu' });
   };
 
   const handleCreateRoom = () => {
@@ -140,6 +151,14 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
           >
             Host a Game
           </button>
+          <button
+            type="button"
+            className="cp-button cp-button--ghost lobby__browse-btn"
+            disabled={!canHost}
+            onClick={() => setScreen({ kind: 'browse' })}
+          >
+            Browse Rooms
+          </button>
           {!canHost && <p className="lobby__hint">Enter your name above to join or host.</p>}
         </section>
         <button
@@ -181,6 +200,19 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
         {hostError && <p role="alert" className="lobby__error">{hostError}</p>}
         <button type="button" className="cp-button lobby__start" onClick={handleCreateRoom}>Create Room</button>
       </section>
+    );
+  } else if (screen.kind === 'browse') {
+    body = (
+      <>
+        <button type="button" className="cp-button cp-button--ghost lobby__back" onClick={() => setScreen({ kind: 'menu' })}>
+          ‹ Back
+        </button>
+        {/* Joining from a row can fail the same way a typed code can - the room may have filled
+            or started between the last poll and the tap - so the error belongs on this screen
+            too, not only under the code field. */}
+        {joinError && <p role="alert" className="lobby__error">{joinError}</p>}
+        <ServerList headingRef={headingRef} onJoin={(code) => joinWithCode(code, { kind: 'browse' })} />
+      </>
     );
   } else if (screen.kind === 'singleplayer') {
     body = (

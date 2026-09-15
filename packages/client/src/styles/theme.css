@@ -139,6 +139,13 @@ body {
   text-shadow: 3px 3px 0 var(--bg-deep);
 }
 
+/* For a spoken-only copy of text that is ALSO on screen in a different form (ServerList's room
+   rows). Without this, dragging over a row and copying picks up both layers - "4821Room 4 8 2
+   4" - in a product whose whole flow is copying a code to send to a friend. */
+.visually-hidden--nocopy {
+  user-select: none;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -1574,6 +1581,100 @@ canvas {
 
 .lobby__roster-tag {
   color: var(--ink-dim);
+}
+
+/* Server browser (ServerList.tsx). A scrolling list of rooms, denser than .lobby__roster since
+   a row carries a code, a line of metadata and an action. Rows keep a fixed height whether or
+   not they carry a status tag, so a self-refreshing list doesn't jump as games start. */
+.server-list__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.server-list__head .lobby__heading {
+  flex: 1 1 auto;
+}
+
+.server-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  /* Caps the panel instead of pushing the Back button off a phone screen once a server has
+     more rooms than fit. */
+  max-height: 46vh;
+  overflow-y: auto;
+  /* A scroll container computes overflow-x to auto too, which would clip the 4px focus ring on
+     a row's Join button against the container's edge. */
+  padding: var(--space-2xs);
+}
+
+.server-list__row {
+  display: flex;
+  /* Wraps rather than squeezes: at 320px the code, the metadata line and a 44px Join don't fit
+     on one line, and shrinking the action below its touch floor is not the trade to make. */
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  background: var(--bg-raised);
+  border: 2px solid var(--bg-deep);
+}
+
+.server-list__info {
+  flex: 1 1 auto;
+  /* Flex children default to min-width: auto and refuse to shrink below their content, which
+     is what turns a long room line into a horizontal scrollbar on a phone. */
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.server-list__code {
+  font-family: var(--cp-font-display);
+  font-size: 1.1rem;
+  letter-spacing: 3px;
+}
+
+/* Deliberately not the ellipsis treatment .lobby__roster-name uses: truncating a name is fine,
+   truncating "3/6" removes the very number the join decision rests on. It wraps instead. */
+.server-list__meta {
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+}
+
+/* --ink-dim at full opacity, never dimmed further: this word is the only thing saying why a
+   room can't be joined, and --ink-dim is already this palette's contrast floor (4.9:1 on the
+   --bg-raised row). De-emphasis comes from size, case and tracking instead. */
+.server-list__tag {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.server-list__join {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 0.85rem;
+  padding: 0.4em 0.9em;
+}
+
+/* Lobby focuses this heading on entry (tabIndex -1) and, unlike the other screens' headings, it
+   is visible - so it gets a real indicator rather than the UA default, matching .rules__title. */
+.server-list__heading:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 4px;
+}
+
+.lobby__browse-btn {
+  align-self: stretch;
 }
 
 /* ---------------------------------------------------------------------------

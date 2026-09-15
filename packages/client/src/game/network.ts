@@ -35,6 +35,8 @@ function resolveServerUrl(): string {
 }
 
 const SERVER_URL = resolveServerUrl();
+/** Same host, http(s) instead of ws(s) - the server's express routes sit on the same port. */
+const HTTP_SERVER_URL = SERVER_URL.replace(/^ws/, 'http');
 
 /** Mirror of GameRoom.ts's RoomState. */
 export interface RoomState {
@@ -114,6 +116,33 @@ export function createRoom({ mode, hue, displayName }: HostOptions): Promise<Roo
 export function joinRoom(code: string, displayName: string, hue: number): Promise<Room<RoomState>> {
   const client = new Client(SERVER_URL);
   return client.join<RoomState>('game', { code: code.trim(), displayName, hue });
+}
+
+/**
+ * One row of the server browser, as GET /rooms returns it. A public summary only - everything
+ * a player shouldn't see before joining stays in room state.
+ */
+export interface RoomSummary {
+  /** The short code, and all a join needs - see joinRoom. */
+  code: string;
+  mode: GameMode;
+  /** 'playing' rooms are listed but can't be joined: the server rejects a mid-game join. */
+  phase: 'waiting' | 'playing';
+  host: string;
+  seats: number;
+  maxSeats: number;
+}
+
+/**
+ * Every live room on the server, waiting or playing. Plain fetch rather than a colyseus
+ * connection: the browser is read-only and shouldn't cost a websocket (nor a seat - joining a
+ * room to look at the list is exactly what a player browsing hasn't decided to do yet).
+ */
+export async function fetchRoomList(): Promise<RoomSummary[]> {
+  const response = await fetch(`${HTTP_SERVER_URL}/rooms`);
+  if (!response.ok) throw new Error(`room list failed: ${response.status}`);
+  const body = await response.json() as { rooms?: RoomSummary[] };
+  return body.rooms ?? [];
 }
 
 export function setSeatColor(room: Room<RoomState>, hue: number): void {

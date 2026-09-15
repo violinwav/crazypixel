@@ -170,6 +170,7 @@ export class GameRoom extends Room<RoomState> {
     // metadata wouldn't be found by that match at all.
     this.listing.code = this.state.code;
     await this.listing.save();
+    this.publishListing();
 
     this.onMessage('play', (client, message: PlayMessage) => this.handlePlay(client, message));
     this.onMessage('passHand', (client) => this.handlePassHand(client));
@@ -197,6 +198,7 @@ export class GameRoom extends Room<RoomState> {
     // Color comes straight from the player's own profile. A stale or buggy client omitting
     // or mangling it falls back to 0 rather than crashing the room.
     this.state.colors.push(isValidHue(options.hue) ? options.hue : 0);
+    this.publishListing();
   }
 
   onLeave(client: Client) {
@@ -210,11 +212,34 @@ export class GameRoom extends Room<RoomState> {
       // colors grows one push per onJoin, so it has to stay index-aligned with the two arrays
       // above on the way out too, or the next joiner gets someone else's color.
       this.state.colors.splice(index, 1);
+      this.publishListing();
     }
   }
 
   onDispose() {
     activeCodes.delete(this.state.code);
+  }
+
+  /**
+   * Mirrors the room's public shape into its matchmaking listing, for GET /rooms (the menu's
+   * server browser). Metadata rather than state fields: the listing is readable without
+   * joining, which is the whole point of a browser, and it is the only view of a room a
+   * player who is not in it ever gets.
+   *
+   * Nothing secret goes in here - a code, a host name, a headcount and a phase are exactly
+   * what the browser row shows. Hands, colors and the board stay behind a real join.
+   *
+   * `seats`, not listing.clients: a seat that dropped mid-game stays seated (see onLeave), so
+   * the client count would under-report a running game's table by however many tabs closed.
+   */
+  private publishListing() {
+    void this.setMetadata({
+      code: this.state.code,
+      mode: this.state.mode,
+      phase: this.state.phase,
+      host: this.state.playerNames[0] ?? '',
+      seats: this.state.seatSessionIds.length,
+    });
   }
 
   // --- Turn commit and clock ----------------------------------------------
@@ -430,6 +455,7 @@ export class GameRoom extends Room<RoomState> {
     this.state.stateJson = JSON.stringify(state);
     this.state.lastMoveJson = '';
     this.scheduleTurnTimeout();
+    this.publishListing();
     // Belt and braces alongside onAuth's phase check: also takes this room out of
     // matchmaking's listing results, not just out of reach for a client holding the code.
     void this.lock();
