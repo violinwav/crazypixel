@@ -9,6 +9,8 @@ import {
 import type { GameConfig, GameState, Move, PlayerId } from '@crazypixel/shared';
 import { planTurn, planCaptures, EMPTY_TURN_ANIMATION } from './animationPlan';
 import type { TurnAnimation } from './animationPlan';
+import { play as playSound } from './audio';
+import { soundForMove, accentForMove } from './moveSounds';
 
 function newGame(config: GameConfig): GameState {
   const state = createInitialState(config);
@@ -50,6 +52,13 @@ export function useGameState(config: GameConfig) {
   const lastPlanRef = useRef<TurnAnimation>(EMPTY_TURN_ANIMATION);
 
   const play = useCallback((player: PlayerId, move: Move) => {
+    // Outside the updater, which StrictMode double-invokes in dev - inside it every move would
+    // sound twice. Here rather than at the button, because a bot's move goes straight through
+    // this hook and never touches GameBoard's click handler: with the sound on the press, a
+    // singleplayer game was silent for every seat except your own.
+    playSound(soundForMove(move));
+    const accent = accentForMove(move);
+    if (accent) playSound(accent);
     setState((prev) => {
       const plan = planTurn(prev, move);
       const next = cloneState(prev);

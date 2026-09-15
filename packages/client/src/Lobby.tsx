@@ -16,6 +16,8 @@ import { RulesScreen } from './RulesScreen';
 import { createRoom, joinRoom } from './game/network';
 import type { RoomState, OnlineSession } from './game/network';
 import type { PlayerIdentity as Identity } from './game/playerIdentity';
+import { SoundToggle } from './SoundToggle';
+import { play as playSound } from './game/audio';
 
 export type { PlayerSetup as GameSetup } from './PlayerSetupPicker';
 
@@ -250,9 +252,23 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
     <main className={`lobby${screen.kind === 'rules' ? ' lobby--rules' : ''}`}>
       <h1 className="cp-title lobby__title">CRAZYPIXEL</h1>
       <PlayerIdentity identity={identity} onChange={onIdentityChange} />
+      {/* Outside the keyed div below for the same reason PlayerIdentity is: anything inside it is
+          destroyed and rebuilt on every screen change, which would drop focus to <body> the
+          moment someone toggled sound and then navigated. Early in the tab order too, so the
+          control is reachable before the first sound rather than after it. */}
+      <SoundToggle variant="strip" />
       {/* Keyed on screen.kind so React remounts this div - and only this div, never the identity
           strip above - on every real transition, replaying its CSS entrance animation. */}
-      <div key={screen.kind} className="lobby__screen">{body}</div>
+      <div
+        key={screen.kind}
+        className="lobby__screen"
+        // Delegated rather than a handler per button: the pregame flow has a dozen of them across
+        // five screens and a click tick is chrome, not behaviour any one of them owns. Capture
+        // phase so it still fires for a button whose own handler stops propagation.
+        onClickCapture={(event) => {
+          if ((event.target as HTMLElement).closest('button')) playSound('uiClick');
+        }}
+      >{body}</div>
     </main>
   );
 }

@@ -29,6 +29,7 @@ import { hueToCss, hueToHex } from '../color';
 import { PALETTE } from '../theme';
 import { CARD_WIDTH, CARD_HEIGHT, handCardWidthFor } from '../cardArt';
 import { EMPTY_TURN_ANIMATION } from '../animationPlan';
+import { play as playSound, playStep } from '../audio';
 import type { CardDrawAnimation, MarbleAnimation, TurnAnimation } from '../animationPlan';
 
 // --- Pieces and fields ----------------------------------------------------
@@ -494,7 +495,14 @@ export class TableScene extends Phaser.Scene {
       // flash in sync with the moment it actually departs.
       const captured = capturedIds.has(marble.id);
       const delay = captured ? captureDelay : 0;
-      if (captured) this.spawnKillWave(existing.x, existing.y, delay);
+      if (captured) {
+        this.spawnKillWave(existing.x, existing.y, delay);
+        // Fired on the same delay as the wave and the trip home, NOT when the move committed.
+        // captureDelay is up to a full 13-square walk (~715ms), so a sound played at commit
+        // time landed most of a second before the marble visibly died - which reads as a random
+        // noise, not as a capture. The sound has to be where the picture is.
+        this.time.delayedCall(delay, () => playSound('kill'));
+      }
       this.tweens.add({ targets: existing, x, y, duration: MOVE_TWEEN_MS, ease: 'Cubic.easeInOut', delay });
     }
 
@@ -540,6 +548,11 @@ export class TableScene extends Phaser.Scene {
       this.tweens.add({
         targets: sprite, x, y, duration: WALK_STEP_MS, ease: 'Linear',
         onComplete: () => {
+          // Arrival, matching the trail mark below - a tick on departure would fire before the
+          // marble had visibly gone anywhere. audio.ts rate-gates this globally, which is what
+          // stops a 55ms-per-square walk (and four concurrent ones during a split 7) from
+          // becoming a rattle.
+          playStep(i);
           // On arrival, not departure, so the trail forms behind the marble rather than
           // lighting up the square it is about to step onto.
           this.spawnTrailMark(x, y, hue);
@@ -649,6 +662,9 @@ export class TableScene extends Phaser.Scene {
    * on the marble itself.
    */
   private playHomeArrival(sprite: Phaser.GameObjects.Image) {
+    // Same reasoning as the capture sound: this fires at the end of the walk, which is where
+    // the marble actually arrives, rather than when the state snapshot said it had.
+    playSound('homeEnter');
     const flash = this.add.rectangle(sprite.x, sprite.y, sprite.displayWidth * 1.4, sprite.displayHeight * 1.4, 0xffffff, 0.85);
     this.tweens.add({
       targets: flash, alpha: 0, duration: 380, ease: 'Cubic.easeOut',

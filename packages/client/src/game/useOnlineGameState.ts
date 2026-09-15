@@ -17,6 +17,8 @@ import { requestRematch, sendEmote, sendStealIntent } from './network';
 import type { EmoteMessage, RoomState, StealIntentMessage } from './network';
 import { EMPTY_TURN_ANIMATION, planCaptures, planTurn } from './animationPlan';
 import type { TurnAnimation } from './animationPlan';
+import { play as playSound } from './audio';
+import { soundForMove, accentForMove } from './moveSounds';
 
 // How many emotes the feed holds at once. Small on purpose - this is a HUD strip beside the
 // discard pile, not a chat log, and the board behind it has to stay readable.
@@ -69,9 +71,16 @@ export function useOnlineGameState(room: Room<RoomState>) {
       // was behind this state (a pass, a fresh deal); a rematch is skipped for the same
       // reason its captures are.
       const moveJson = room.state.lastMoveJson;
-      const plan = moveJson && !isRematch
-        ? planTurn(prevStateRef.current, JSON.parse(moveJson) as Move)
-        : EMPTY_TURN_ANIMATION;
+      const move = moveJson && !isRematch ? JSON.parse(moveJson) as Move : null;
+      // Every seat's move, not just this client's. The board shows an opponent's marbles moving
+      // either way; without this only your own moves made a sound, which reads as the game
+      // going quiet whenever it isn't your turn.
+      if (move) {
+        playSound(soundForMove(move));
+        const accent = accentForMove(move);
+        if (accent) playSound(accent);
+      }
+      const plan = move ? planTurn(prevStateRef.current, move) : EMPTY_TURN_ANIMATION;
       lastPlanRef.current = {
         marbles: plan.marbles,
         draws: plan.draws,

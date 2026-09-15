@@ -10,6 +10,12 @@ import { OnlineGameView } from './OnlineGameView';
 import { PixelDither } from './PixelDither';
 import type { BoardBackground } from './GameBoard';
 import { usePlayerIdentity } from './game/playerIdentity';
+import { primeAudio } from './game/audio';
+
+// Module scope, not an effect: StrictMode double-invokes effects without cleanup in dev, and
+// primeAudio is idempotent but there is no reason to make it defend against that. Arming only
+// registers listeners - it builds no AudioContext and makes no sound until a real gesture.
+primeAudio();
 
 export default function App() {
   const [setup, setSetup] = useState<GameSetup | null>(null);

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { play as playSound } from './game/audio';
 
 const TURN_MS = 20000;
 // Ticked on a fixed interval, not requestAnimationFrame - rAF is throttled in backgrounded and
@@ -9,6 +10,14 @@ const TICK_MS = 200;
 // out auto-plays a move for them - GameBoard mounts this bar on every seat's turn, so on a
 // six-player table most of these announcements are informational rather than actionable.
 const ANNOUNCE_THRESHOLDS_S = [10, 5];
+/**
+ * The warning tone sounds once, at the lower threshold only, and only on your own turn. Both
+ * restrictions matter: this bar mounts on every seat's turn, so an ungated beep would fire six
+ * times a round on a full table, five of them for deadlines the listener cannot act on - which
+ * trains them to ignore the one that counts. The text announcements stay on both thresholds and
+ * on every seat; speech queues politely and can be skipped, an urgency tone cannot.
+ */
+const SOUND_THRESHOLD_S = 5;
 
 // The fill shifts toward red once half the turn is gone, reaching full red at the
 // quarter-remaining mark - an increasingly urgent color cue, not just an emptying bar.
@@ -34,6 +43,8 @@ interface Props {
    * clock owns the timeout is what enforces it, so a client running slightly fast or slow just
    * sees the bar empty a beat early or late, never a wrong outcome. */
   deadline: number;
+  /** Gates the warning tone only - see SOUND_THRESHOLD_S. The text never depends on this. */
+  isMyTurn?: boolean;
 }
 
 /**
@@ -46,7 +57,7 @@ interface Props {
  * and the turn moves on with the bar part-drained, the same as a fast human online. Nothing here
  * needs to know a bot is acting.
  */
-export function TurnTimerBar({ deadline }: Props) {
+export function TurnTimerBar({ deadline, isMyTurn = false }: Props) {
   const [now, setNow] = useState(() => Date.now());
   const [announcement, setAnnouncement] = useState('');
   const announcedRef = useRef(new Set<number>());
@@ -70,6 +81,10 @@ export function TurnTimerBar({ deadline }: Props) {
       announcedRef.current.add(threshold);
       // Deferred to avoid calling setState synchronously during render.
       queueMicrotask(() => setAnnouncement(`${threshold} seconds left this turn.`));
+      // Ahead of the sentence, not on top of it. This is the most consequential thing the game
+      // says - running out plays a move for you - and a tone landing on the word "five" masks
+      // exactly the syllable that carries it. Sounding first primes the announcement instead.
+      if (isMyTurn && threshold === SOUND_THRESHOLD_S) playSound('timerWarning');
     }
   }
 

@@ -1,13 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { EMOTES, trackLengthFor } from '@crazypixel/shared';
-import type { GameState, PlayerId } from '@crazypixel/shared';
-import { computeBoardGeometry, drawPileCenter } from './game/boardLayout';
-import { handCardWidthFor } from './game/cardArt';
+import { EMOTES } from '@crazypixel/shared';
+import type { GameState } from '@crazypixel/shared';
 
 interface Props {
   state: GameState;
-  containerSize: { width: number; height: number };
-  viewerSeat: PlayerId;
   onEmote: (emoteId: string) => void;
   muted: boolean;
   onMutedChange: (muted: boolean) => void;
@@ -18,19 +14,18 @@ interface Props {
 // limit is visible before you hit it. A client running a stale copy just means its own UI is
 // optimistic - the server still drops the send.
 const COOLDOWN_MS = 1200;
-// Gap between the draw pile's right edge and the toggle.
-const PILE_GAP = 12;
-// The panel's own width, and how close it may come to the container's right edge once clamped.
+// The panel's own width. It is clamped against the viewport in CSS rather than here now that
+// the toggle sits at a fixed corner instead of floating with the card stacks.
 const PANEL_WIDTH = 300;
-const EDGE_MARGIN = 8;
-// Must match .emote-picker__toggle's width/height in theme.css. The button is centred on the
-// left/top it is given, so half of it has to be added to any edge-to-edge gap, or the gap is
-// measured to its middle and the other half laps back over whatever it was meant to clear.
-const TOGGLE_SIZE = 44;
 
 /**
- * One toggle pinned beside the card stacks, and a panel of the fixed emote catalogue that
- * opens upward from it.
+ * One toggle in the board's HUD cluster (top-left, beside the sound toggle), and a panel of the
+ * fixed emote catalogue that opens downward from it.
+ *
+ * It used to be pinned beside the draw pile, which put a 44px target in the middle of the live
+ * board and left its panel covering the square the rank picker and steal overlay appear on. In
+ * the corner it shares one strip of chrome with the sound toggle and is out of the play area
+ * entirely, so the panel no longer has to fight the board for room.
  *
  * Deliberately NOT gated on whose turn it is - reacting to the move that just wrecked you is
  * the entire point, and it is the one control here that stays live while you wait. That is also
@@ -44,7 +39,7 @@ const TOGGLE_SIZE = 44;
  * the "lay down cards" button appear - so the turn right after a message read as unplayable.
  * Explicitly restoring focus solves the keyboard half without leaving the board covered.
  */
-export function EmotePicker({ state, containerSize, viewerSeat, onEmote, muted, onMutedChange }: Props) {
+export function EmotePicker({ state, onEmote, muted, onMutedChange }: Props) {
   const [open, setOpen] = useState(false);
   const [coolingDown, setCoolingDown] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -79,25 +74,6 @@ export function EmotePicker({ state, containerSize, viewerSeat, onEmote, muted, 
     };
   }, [open]);
 
-  if (containerSize.width === 0) return null;
-
-  const geo = computeBoardGeometry(
-    containerSize.width, containerSize.height, trackLengthFor(state.config), viewerSeat, state.config.playerCount,
-  );
-  const pile = drawPileCenter(geo);
-  const cardWidth = handCardWidthFor(containerSize.width);
-  // Anchored to the RIGHT of the stacks, mirroring the feed on the left. The gap between the two
-  // piles closes to about 13px on a 375px phone (they sit a trackRadius-relative stackOffset
-  // apart and both shrink together), so there is no version of "between the piles" that fits a
-  // 44px touch target.
-  const toggleLeft = pile.x + cardWidth / 2 + PILE_GAP + TOGGLE_SIZE / 2;
-  // Clamped so the panel can't overflow the right edge on a phone, where the toggle sits well
-  // inside the viewport but a panel centred on it would not.
-  const panelLeft = Math.max(
-    EDGE_MARGIN,
-    Math.min(toggleLeft - PANEL_WIDTH / 2, containerSize.width - PANEL_WIDTH - EDGE_MARGIN),
-  );
-
   const send = (emoteId: string) => {
     // aria-disabled doesn't block activation the way the native attribute does, so the cooldown
     // has to be enforced here too, not just painted on the buttons.
@@ -115,7 +91,6 @@ export function EmotePicker({ state, containerSize, viewerSeat, onEmote, muted, 
         ref={toggleRef}
         type="button"
         className="cp-button emote-picker__toggle"
-        style={{ left: toggleLeft, top: pile.y }}
         // A static label. Flipping it to "Close emotes" while open would double up with
         // aria-expanded and announce as "Close emotes, expanded, button".
         aria-label="Emotes"
@@ -132,7 +107,7 @@ export function EmotePicker({ state, containerSize, viewerSeat, onEmote, muted, 
         <div
           id={panelId}
           className="cp-panel emote-picker__panel"
-          style={{ left: panelLeft, width: PANEL_WIDTH, bottom: containerSize.height - pile.y + cardWidth / 2 + PILE_GAP }}
+          style={{ width: PANEL_WIDTH }}
         >
           <ul className="emote-picker__grid" aria-label="Emotes" aria-describedby={hintId}>
             {EMOTES.map((emote) => (

@@ -2007,8 +2007,6 @@ canvas {
 }
 
 .emote-picker__toggle {
-  position: absolute;
-  transform: translate(-50%, -50%);
   width: var(--target-min-touch);
   height: var(--target-min-touch);
   min-width: var(--target-min-touch);
@@ -2022,24 +2020,20 @@ canvas {
      once ended up trapped underneath this button. */
 }
 
-/* The same additive-transform fix .cp-button.board-status__pass needs, for the same reason:
-   .cp-button:active's translate REPLACES this button's centering rather than adding to it,
-   snapping it half its own width out from under the finger between touchstart and the
-   hit-test at touchend. */
-.emote-picker__toggle:active {
-  transform: translate(calc(-50% + 3px), calc(-50% + 3px));
-}
-
 .emote-picker__panel {
   position: absolute;
-  /* Opens UPWARD out of the toggle, into the gap between the ring and the hand panel, so it
-     never fully covers a focused move button below it (WCAG 2.4.11) and never prints through
-     the turn label - see --board-bottom-clearance. */
+  /* Opens DOWNWARD out of the toggle now that the toggle lives in the top-left HUD rather than
+     beside the draw pile. Still capped short of the hand panel so it can never fully cover a
+     focused move button below it (WCAG 2.4.11) - see --board-bottom-clearance. max-width keeps
+     it inside the viewport on a phone, which the old inline clamp used to do in JS. */
+  top: calc(100% + var(--space-xs));
+  left: 0;
+  max-width: calc(100vw - var(--space-xs) * 4);
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
   padding: var(--space-xs);
-  max-height: calc(100% - var(--board-bottom-clearance));
+  max-height: calc(100vh - var(--board-bottom-clearance) - var(--target-min-touch) * 2);
   overflow-y: auto;
   pointer-events: auto;
 }
@@ -2671,4 +2665,111 @@ canvas {
 .rules-cards__face .playing-card__index--bottom {
   bottom: 3px;
   right: 3px;
+}
+
+/* ---------------------------------------------------------------------------
+   Sound toggle
+   --------------------------------------------------------------------------- */
+
+.sound-toggle {
+  width: var(--target-min-touch);
+  height: var(--target-min-touch);
+  min-width: var(--target-min-touch);
+  padding: 0;
+  font-size: 11px;
+  letter-spacing: 0;
+  touch-action: manipulation;
+}
+
+/* Same reason .lobby__choice needs this: the base .cp-button rule renders filled in both
+   states, so on/off would look identical. The pressed state is an inset ring, not just a fill
+   swap - a shape change survives a color-blind or greyscale reading of the button, and it is
+   the only state indicator left now that the label is deliberately static. */
+.sound-toggle[aria-pressed='false'] {
+  background: var(--bg-raised);
+  color: var(--ink-dim);
+}
+
+.sound-toggle[aria-pressed='true'] {
+  box-shadow: 4px 4px 0 var(--bg-deep), 0 0 0 3px var(--ink) inset;
+}
+
+.sound-toggle__glyph {
+  /* The glyphs are punctuation, which the body font tracks wide - reset so both states center
+     inside the same 44px square instead of drifting apart. */
+  letter-spacing: -1px;
+}
+
+/* In the HUD cluster it is a plain flex item - .board-hud owns the positioning. */
+.sound-toggle--board {
+  position: static;
+}
+
+/* Pinned to the board's top-left, opposite the seat that owns the bottom of the screen. No
+   z-index, matching the emote toggle: GameBoard renders this before the game overlays so DOM
+   order alone keeps it behind anything the player acts on. Anchored to GameBoard's own
+   position: relative board container - NOT inside .board-overlay, whose pointer-events: none
+   would leave these focusable and keyboard-operable but silently untappable. */
+.board-hud {
+  position: absolute;
+  top: var(--space-xs);
+  left: var(--space-xs);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+
+/* The anchor the emote panel hangs from. Static width so the flex row doesn't stretch it. */
+.board-hud .emote-picker {
+  position: relative;
+}
+
+/* Chrome, not play: these two sit permanently over the board, so at full strength they read as
+   part of the game rather than as settings parked on top of it. Translucent enough to let the
+   board through, and they come up to full opacity on hover or focus so the thing you are
+   actually aiming at is never the faint one.
+
+   Border and glyph keep their own colour rather than riding a blanket opacity: fading the whole
+   button would take the focus ring down with it, and the ring has to stay at 3:1 against
+   whatever board art happens to be behind it (WCAG 1.4.11). */
+.board-hud .cp-button {
+  background: color-mix(in srgb, var(--bg-raised) 55%, transparent);
+  border-color: color-mix(in srgb, var(--ink-dim) 70%, transparent);
+  color: var(--ink-dim);
+  box-shadow: none;
+  transition: background 120ms linear, border-color 120ms linear, color 120ms linear;
+}
+
+.board-hud .cp-button:hover,
+.board-hud .cp-button:focus-visible,
+.board-hud .cp-button[aria-expanded='true'] {
+  background: var(--bg-raised);
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+/* Sound ON is the default and wants no emphasis at all in the HUD, so it drops the inset ring
+   the lobby's copy of this control uses. Muted is the exceptional state and keeps a full
+   strength ring - the glyph changes too, so the state is never carried by colour alone. */
+.board-hud .sound-toggle[aria-pressed='true'] {
+  box-shadow: none;
+}
+
+.board-hud .sound-toggle[aria-pressed='false'] {
+  background: var(--bg-raised);
+  border-color: var(--ink);
+  color: var(--ink);
+  box-shadow: 0 0 0 3px var(--player-red) inset;
+}
+
+/* Inline chrome - no positioning of its own, it just sits where its parent puts it. */
+.sound-toggle--strip {
+  align-self: center;
+}
+
+/* In the lobby it tucks against the right edge of the column rather than sitting centred and
+   stranded between two panels: it is a utility control, not one of the flow's own choices. */
+.lobby > .sound-toggle--strip {
+  align-self: flex-end;
+  margin-bottom: calc(var(--space-xs) * -1);
 }

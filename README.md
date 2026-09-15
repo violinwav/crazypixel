@@ -84,6 +84,10 @@ two modes.
   auto-plays a stalled seat, emotes, and a host-initiated rematch that re-deals to the same
   table.
 - **Bots** — three difficulty levels, scoring only moves the engine already declared legal.
+- **Sound** — every effect synthesized at play time from oscillators and noise, no audio files.
+  A distinct cue per event, including separate ones for a capture, a J-swap, an 8 copying the
+  last card, and a marble entering the board. On by default, with a toggle in the menu and on
+  the board that persists across visits.
 - **Singleplayer turn clock** is optional (nothing is waiting on you), on by default online.
 
 **Not implemented:**
@@ -109,7 +113,9 @@ two modes.
 - Every legal move is a real, accessible `<button>` positioned over the board (not a Phaser
   canvas element) — the game is playable with a keyboard or a screen reader, not just a mouse
   or a touchscreen. Turn changes, captures, and emotes are announced through live regions,
-  and `prefers-reduced-motion` stops every transition and the dithered background loop.
+  and `prefers-reduced-motion` stops every transition and the dithered background loop. Sound is
+  never the only channel: captures and home arrivals are announced as text alongside their cue,
+  the turn-clock tone only sounds on your own turn, and nothing plays before a real gesture.
 
 ### Sprite art
 

@@ -45,6 +45,12 @@ export function createPhaserGame(parent: HTMLElement): PhaserBridge {
     parent,
     backgroundColor: PALETTE.bgDeep,
     pixelArt: true,
+    // Phaser spins up its own WebAudioSoundManager - and with it a second AudioContext - unless
+    // told not to. Nothing here plays sound through Phaser (game/audio.ts owns all of it and
+    // holds the only context), and iOS caps concurrent contexts per document, past which they
+    // fail silently. Phaser's manager also unlocks on first gesture, which would paper over a
+    // broken unlock path in audio.ts by resuming the shared device on its behalf.
+    audio: { noAudio: true },
     scale: {
       mode: Phaser.Scale.RESIZE,
       autoCenter: Phaser.Scale.CENTER_BOTH,

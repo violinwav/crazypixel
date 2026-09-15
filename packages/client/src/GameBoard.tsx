@@ -37,6 +37,9 @@ import { playerLabel } from './game/playerName';
 import { hueToCss } from './game/color';
 import { PixelDither } from './PixelDither';
 import { handCardWidthFor } from './game/cardArt';
+// Aliased: `play` is already this component's own prop (the move-committing callback).
+import { play as playSound } from './game/audio';
+import { SoundToggle } from './SoundToggle';
 
 // Matches .hand-panel's top/bottom padding asymmetry in theme.css (28px vs 8px, an extra 20px
 // split evenly around dead center). The real hand cards sit this far below the true vertical
@@ -166,6 +169,16 @@ export function GameBoard({
   // flight runs, so handlePlay doesn't start a second overlapping fly-to-discard for the same
   // card once the move commits a tap later.
   const pendingFlightCardIdRef = useRef<string | null>(null);
+  // Board outcomes (captures, home arrivals) as text, delayed a beat behind their sound so the
+  // cue primes the announcement rather than talking over it - see the effect that fills it.
+  const [boardEventAnnouncement, setBoardEventAnnouncement] = useState('');
+  /**
+   * Deliberately NOT prevStateRef below. That ref is read AND advanced by the steal effect, so
+   * sharing it makes the two a race decided by declaration order - whichever runs first advances
+   * it and the other diffs state against itself. The steal effect also bails on round boundaries
+   * and on your own moves, both of which this one has to see.
+   */
+  const prevStateForEventsRef = useRef<GameState | null>(null);
   // Previous state, kept purely to detect "one of MY cards just vanished because someone ELSE'S
   // move took it" - see the effect below. Not used for anything else.
   const prevStateRef = useRef<GameState | null>(null);
@@ -255,6 +268,7 @@ export function GameBoard({
     if (dealtRoundRef.current === state.roundIndex) return;
     if (!containerRef.current || !handPanelRef.current || containerSize.width === 0) return;
     dealtRoundRef.current = state.roundIndex;
+    playSound('deal');
     const geo = boardGeometryFor(state.config, containerSize, viewerSeat);
     const containerRect = containerRef.current.getBoundingClientRect();
     const deckPoint = drawPileCenter(geo);
@@ -343,6 +357,25 @@ export function GameBoard({
   // 200-character display name is a denial of service on a screen reader.
   const announcedEmotes = visibleEmotes.filter((e) => e.by !== mySeat);
 
+  /**
+   * A chirp for an arriving emote. Gated on the SAME emotesMuted flag as the feed and the log,
+   * never on sound alone: someone who pressed "Hide emotes" asked not to be interrupted by them,
+   * and a mute that still chirps is a mute that lies. Own emotes are skipped for the same reason
+   * they are not announced - you pressed the button.
+   *
+   * audio.ts's per-category gate does the rest of the work: the server cooldown is per SEAT, so
+   * five opponents can legally sustain about four emotes a second between them, which nobody
+   * needs to hear as four sounds.
+   */
+  const lastEmoteIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    const newest = announcedEmotes[announcedEmotes.length - 1];
+    const previous = lastEmoteIdRef.current;
+    lastEmoteIdRef.current = newest?.id ?? null;
+    // First render seeds the ref without sounding a backlog that arrived before we were looking.
+    if (newest && previous !== null && newest.id !== previous) playSound('emote');
+  }, [announcedEmotes]);
+
   const selectedCard = state.hands[state.currentPlayer].find((c) => c.id === selectedCardId) ?? null;
 
   const startCardFlight = (card: Card) => {
@@ -376,8 +409,75 @@ export function GameBoard({
       startCardFlight(move.card);
     }
     pendingFlightCardIdRef.current = null;
+    // No sound here: both state hooks voice every committed move, so a bot's and an opponent's
+    // are heard too. Doing it at the press as well would double every one of your own.
     play(player, move);
   };
+
+  /**
+   * Captures and home arrivals, as both a sound and a sentence.
+   *
+   * The sentence is the point. Before this, a capture was carried only by a Phaser tween and a
+   * home arrival by a 380ms fade - the polite region names the CARD that was played, never what
+   * it did. Adding the sounds without the text would have handed hearing players an instant,
+   * unmistakable signal for the two most consequential events in the game and left everyone else
+   * with strictly less than they had.
+   *
+   * A marble reaching the kennel from the track is a capture; nothing else can put it there.
+   */
+  useEffect(() => {
+    const prev = prevStateForEventsRef.current;
+    prevStateForEventsRef.current = state;
+    if (!prev) return;
+    // A re-deal doesn't move marbles, but a rematch swaps the whole board out from under this.
+    if (prev.marbles.length !== state.marbles.length) return;
+
+    const before = new Map(prev.marbles.map((m) => [m.id, m.location.zone]));
+    const captured = state.marbles.filter((m) => m.location.zone === 'kennel' && before.get(m.id) === 'track');
+    const arrived = state.marbles.filter((m) => m.location.zone === 'home' && before.get(m.id) === 'track');
+    if (captured.length === 0 && arrived.length === 0) {
+      // Cleared rather than left standing. A live region only announces what MUTATED, so a
+      // capture line left in place from two moves ago would stay silent the next time the
+      // identical capture happened - and until then it sits in the region as a description of
+      // something that is no longer what just occurred.
+      setBoardEventAnnouncement('');
+      return;
+    }
+
+    // No sound here. Both of these are voiced by TableScene at the moment the marble actually
+    // moves on screen - a capture is held back until whatever killed it has finished walking,
+    // which is up to ~715ms after this snapshot arrives.
+    const actor = playerLabel(playerNames, prev.currentPlayer);
+    const lines: string[] = [];
+    for (const owner of new Set(captured.map((m) => m.owner))) {
+      const count = captured.filter((m) => m.owner === owner).length;
+      const marbles = count === 1 ? 'marble' : `${count} marbles`;
+      lines.push(owner === mySeat ? `${actor} sent your ${marbles} home.` : `${actor} sent ${playerLabel(playerNames, owner)}'s ${marbles} home.`);
+    }
+    for (const owner of new Set(arrived.map((m) => m.owner))) {
+      // The running total, not the event: "you have 3 marbles home" is the thing a player
+      // actually wants to know, and it is naturally once per move however many arrived.
+      const total = state.marbles.filter((m) => m.owner === owner && m.location.zone === 'home').length;
+      const marbles = total === 1 ? '1 marble' : `${total} marbles`;
+      lines.push(owner === mySeat ? `You have ${marbles} home.` : `${playerLabel(playerNames, owner)} has ${marbles} home.`);
+    }
+
+    // Held back so the cue lands first and clears. There is no way to know when a screen reader
+    // starts speaking, so the only reliable rule is to be finished before it plausibly could.
+    const timer = window.setTimeout(() => setBoardEventAnnouncement(lines.join(' ')), 250);
+    return () => window.clearTimeout(timer);
+  }, [state, mySeat, playerNames]);
+
+  /**
+   * The "you're up" cue. Keyed on isMyTurn's rising edge rather than on state, so it fires once
+   * when the turn arrives and not again on every re-render within it.
+   */
+  const wasMyTurnRef = useRef(false);
+  useEffect(() => {
+    const was = wasMyTurnRef.current;
+    wasMyTurnRef.current = isMyTurn;
+    if (isMyTurn && !was) playSound('yourTurn');
+  }, [isMyTurn]);
 
   // Detects "a hand just lost a card its owner didn't play". The only move that can do that to
   // someone else's hand is a steal (see applyMove - every other kind either doesn't touch hands
@@ -507,6 +607,26 @@ export function GameBoard({
             in the DOM, which is exactly how the Joker picker once ended up trapped under the
             emote button. Anything with an explicit z-index further down this tree stays above
             them for free. */}
+        {/* Unconditional apart from the win screen, which carries its own copy: a control that
+            vanished on other players' turns (isMyTurn) or in local hotseat (emotesEnabled, which
+            is false with no onEmote) would be missing in exactly the situations someone reaches
+            for it. Left mounted under the win screen it would instead be an invisible tab stop,
+            which is the trap emotesEnabled already works around. No z-index, like the emote HUD -
+            ordering is what keeps this behind anything the player acts on. */}
+        {/* One strip of chrome, top-left and out of the play area: both controls are settings,
+            not moves, and side by side they read as a pair rather than as two stray buttons
+            parked on the board. */}
+        <div className="board-hud">
+          {state.phase !== 'gameEnd' && <SoundToggle variant="board" />}
+          {emotesEnabled && (
+            <EmotePicker
+              state={state}
+              onEmote={onEmote!}
+              muted={emotesMuted}
+              onMutedChange={handleMutedChange}
+            />
+          )}
+        </div>
         {emotesEnabled && (
           <EmoteFeed
             emotes={visibleEmotes}
@@ -515,16 +635,6 @@ export function GameBoard({
             viewerSeat={viewerSeat}
             colors={colors}
             playerNames={playerNames}
-          />
-        )}
-        {emotesEnabled && (
-          <EmotePicker
-            state={state}
-            containerSize={containerSize}
-            viewerSeat={viewerSeat}
-            onEmote={onEmote!}
-            muted={emotesMuted}
-            onMutedChange={handleMutedChange}
           />
         )}
         <OpponentHandCounts
@@ -561,7 +671,7 @@ export function GameBoard({
       {/* Board changes are narrated from here, not by the canvas - the canvas has no way to
           expose them to assistive tech, this text does. */}
       <p aria-live="polite" className="visually-hidden">
-        {stealAnnouncement} {lastMoveAnnouncement} {turnAnnouncement}
+        {stealAnnouncement} {lastMoveAnnouncement} {boardEventAnnouncement} {turnAnnouncement}
       </p>
       {/* Emotes get their own region rather than joining the line above. That line is five text
           nodes (three expressions plus the two literal spaces), and with the default
@@ -609,7 +719,7 @@ export function GameBoard({
           ) : (
             <TurnLabel player={state.currentPlayer} playerNames={playerNames} />
           )}
-          {turnDeadline !== undefined && <TurnTimerBar deadline={turnDeadline} />}
+          {turnDeadline !== undefined && <TurnTimerBar deadline={turnDeadline} isMyTurn={isMyTurn} />}
           <HandPanel
             state={state}
             player={mySeat}

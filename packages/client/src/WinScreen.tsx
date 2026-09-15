@@ -1,6 +1,9 @@
+import { useEffect, useRef } from 'react';
 import type { GameState } from '@crazypixel/shared';
 import { hueToCss } from './game/color';
 import { playerLabel } from './game/playerName';
+import { play as playSound } from './game/audio';
+import { SoundToggle } from './SoundToggle';
 
 interface Props {
   state: GameState;
@@ -27,16 +30,35 @@ function backToLobby() {
 }
 
 export function WinScreen({ state, colors, playerNames, onPlayAgain, playAgainLabel = 'Play Again', playAgainHint }: Props) {
-  if (state.phase !== 'gameEnd' || !state.winners) return null;
+  const ended = state.phase === 'gameEnd' && !!state.winners;
+
+  /**
+   * role="alertdialog" only actually says anything once focus is inside it, and nothing moved
+   * focus here before. The result was that a game ending produced, non-visually: the polite
+   * region falling silent (turnAnnouncement is deliberately '' at gameEnd), the board overlay
+   * unmounting, and a fixed panel appearing that a keyboard or screen reader user was never
+   * taken to. The win sting would then have been the only end-of-game signal for anyone who
+   * could hear it, and no signal at all for anyone who couldn't.
+   */
+  const headingRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (!ended) return;
+    playSound('win');
+    headingRef.current?.focus();
+  }, [ended]);
+
+  if (!ended || !state.winners) return null;
   const isTeamWin = state.winners.length > 1;
 
   return (
-    <div className="win-screen" role="alertdialog" aria-labelledby="win-screen-heading">
+    <div className="win-screen" role="alertdialog" aria-labelledby="win-screen-heading" aria-describedby="win-screen-players">
       <div className="cp-panel win-screen__card">
-        <p className="cp-title win-screen__heading" id="win-screen-heading">
+        {/* tabIndex -1 so the effect above can put focus here; it is a heading, not a control,
+            so it stays out of the tab sequence itself. */}
+        <p className="cp-title win-screen__heading" id="win-screen-heading" ref={headingRef} tabIndex={-1}>
           {isTeamWin ? 'TEAM WINS' : 'WINNER'}
         </p>
-        <div className="win-screen__players">
+        <div className="win-screen__players" id="win-screen-players">
           {state.winners.map((player) => (
             <span key={player} className="win-screen__player">
               <span className="win-screen__swatch" style={{ backgroundColor: hueToCss(colors[player]) }} aria-hidden="true" />
@@ -59,6 +81,10 @@ export function WinScreen({ state, colors, playerNames, onPlayAgain, playAgainLa
           <button type="button" className="cp-button" onClick={backToLobby}>
             Change Settings
           </button>
+          {/* The board's own toggle is unmounted behind this panel (it would be an invisible tab
+              stop), and this is the screen where a sound just played - so the control has to
+              exist here too or there is a moment with no way to silence the game. */}
+          <SoundToggle variant="strip" />
         </div>
       </div>
     </div>
