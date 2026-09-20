@@ -41,13 +41,16 @@ using a deck of playing cards to move — plus these house rules:
 | **4** | Move 4 spaces forward or backward. Landing exactly on your own base square while going backward earns entry into your home stretch on a later move, without needing a full extra lap. |
 | **7** | Split 7 steps across up to 7 of your (or your partner's) marbles, moved one at a time — you can hop a blocked teammate out of the way and then finish another marble in the same play, but marbles already in the home stretch can't be jumped over. |
 | **8** | Move 8 spaces, **or** replay whatever the previous card did. |
-| **J** | Swap the positions of any two marbles on the track (not your own marble still guarding its base). |
+| **J** | Swap the positions of any two marbles on the track (not one still fresh out of the kennel and guarding its own base). |
 | **Joker** | Play as any other rank, including starting a marble. |
 
-A marble sitting on your own base square blocks that square for everyone, including your own
-other marbles. Landing on an opponent sends their marble straight back to their base. A
-player with no legal move for any card in hand discards their whole hand and sits out until
-the next round's redeal.
+A marble that has just come out of the kennel onto your base square guards it: nobody can
+pass it, land on it or swap it away, including your own other marbles. That protection is
+earned by the entry, not by the square - it ends the moment that marble moves off, and a
+marble that later laps back round onto its own base is an ordinary target there. A guarded
+marble is marked on the board with four corner brackets. Landing on an opponent sends their
+marble straight back to their base. A player with no legal move for any card in hand discards
+their whole hand and sits out until the next round's redeal.
 
 An in-game **How to play** screen covers every card with an animated diagram on a miniature
 board, backed by the same explanation as a written, scrubbable step list — so none of the

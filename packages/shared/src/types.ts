@@ -37,6 +37,14 @@ export interface Marble {
    * there counts.
    */
   hasLapped: boolean;
+  /**
+   * Fresh out of the kennel and still sitting on the start square it was placed on. Only
+   * startMarble sets this, and the marble's own next move clears it - so it marks the one
+   * entry that square is a safe guard post for, not the square itself. A marble that later
+   * laps back onto the same square (hasLapped) is an ordinary target there: passable,
+   * capturable, and a legal swapJack partner.
+   */
+  startProtected: boolean;
 }
 
 export type GamePhase = 'dealing' | 'cardPass' | 'playing' | 'roundEnd' | 'gameEnd';

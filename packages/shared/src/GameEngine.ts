@@ -48,7 +48,13 @@ export function createInitialState(config: GameConfig): GameState {
   const marbles: Marble[] = [];
   for (const player of activePlayerIds(config)) {
     for (let slot = 0; slot < KENNEL_SIZE; slot++) {
-      marbles.push({ id: `p${player}-m${slot}`, owner: player, location: { zone: 'kennel', index: slot }, hasLapped: false });
+      marbles.push({
+        id: `p${player}-m${slot}`,
+        owner: player,
+        location: { zone: 'kennel', index: slot },
+        hasLapped: false,
+        startProtected: false,
+      });
     }
   }
   return {
@@ -198,18 +204,25 @@ function sendToKennel(state: GameState, marble: Marble): void {
   // A captured marble starts over - any lap it banked is gone, and it has to earn the right
   // to enter home again from scratch.
   marble.hasLapped = false;
+  marble.startProtected = false;
 }
 
 /**
- * Once a marble sits on its owner's start square, passage there is blocked for every marble
- * on the board, the owner's own included, until it moves away. The guard marble also can't
- * be sent home while it sits there.
+ * A start square is sealed only while the marble standing on it is the one that *entered*
+ * there this trip (marble.startProtected). For as long as that holds, passage is blocked for
+ * every marble on the board, the owner's own included, and the guard itself can't be sent
+ * home.
+ *
+ * Crucially this is a property of the marble, not of the square: a marble that later laps
+ * back round onto its own start square, or reaches it with a backward 4, gets none of it and
+ * is an ordinary occupant there. Testing the square alone (owner's marble present?) made the
+ * base a permanent sanctuary for anyone willing to park on it.
  */
 function isBlockaded(state: GameState, index: number): boolean {
   const owner = activePlayerIds(state.config).find((p) => startIndexFor(state.config, p) === index);
   if (owner === undefined) return false;
   const guard = marbleAtTrackIndex(state, index);
-  return !!guard && guard.owner === owner;
+  return !!guard && guard.owner === owner && guard.startProtected;
 }
 
 // --- Movement -------------------------------------------------------------
@@ -353,10 +366,11 @@ export function getLegalMoves(
   }
 
   if (def.isJack) {
-    // A marble still on its own start square hasn't entered play yet (it's also the blockade
-    // guard there), so it can't be swapped away or swapped onto until it has moved off once.
-    const isAtOwnStart = (m: Marble) => m.location.zone === 'track' && m.location.index === startIndexFor(config, m.owner);
-    const onTrack = state.marbles.filter((m) => m.location.zone === 'track' && !isAtOwnStart(m));
+    // A marble still guarding the start square it entered on hasn't entered play yet, so it
+    // can't be swapped away or swapped onto until it has moved off once. Gated on
+    // startProtected rather than on position: a marble that lapped back onto its own start
+    // square is fully in play and a legal swap partner like any other.
+    const onTrack = state.marbles.filter((m) => m.location.zone === 'track' && !m.startProtected);
     for (const a of onTrack.filter((m) => m.owner === player)) {
       for (const b of onTrack.filter((m) => m.id !== a.id)) {
         moves.push({ kind: 'swapJack', card, marbleIdA: a.id, marbleIdB: b.id });
@@ -503,7 +517,11 @@ function applyEffect(state: GameState, player: PlayerId, move: Move): void {
       // opponent's caught there is sent home, the same landing capture as any other move.
       const occupant = marbleAtTrackIndex(state, startIdx);
       if (occupant) sendToKennel(state, occupant);
-      findMarble(state, move.marbleId).location = { zone: 'track', index: startIdx };
+      const entering = findMarble(state, move.marbleId);
+      entering.location = { zone: 'track', index: startIdx };
+      // The one moment the start square guards anything. Cleared by this marble's own next
+      // move (see leaveStartProtection) - never renewed by coming back round to it.
+      entering.startProtected = true;
       break;
     }
     case 'moveMarble': {
@@ -522,6 +540,11 @@ function applyEffect(state: GameState, player: PlayerId, move: Move): void {
       const tmp = a.location;
       a.location = b.location;
       b.location = tmp;
+      // Unreachable while getLegalMoves excludes protected marbles from both sides of a
+      // swap, but a displaced marble is no longer standing where it entered either way, so
+      // don't leave a stale guard flag behind if that rule is ever relaxed.
+      a.startProtected = false;
+      b.startProtected = false;
       break;
     }
     case 'forceDraw': {
@@ -551,6 +574,16 @@ function markLappedIfAtOwnStart(state: GameState, marble: Marble): void {
   }
 }
 
+/**
+ * A marble that has moved is no longer the one standing where it entered, so its guard on the
+ * start square ends - including the (unreachable in one card, but free to handle) case of a
+ * move that lands it right back on that square. Earning hasLapped there is the reward for a
+ * full lap; it does not hand the sanctuary back.
+ */
+function leaveStartProtection(marble: Marble): void {
+  marble.startProtected = false;
+}
+
 /** Every card but the 7: only the square the marble stops on is captured. */
 function moveWithLandingCapture(state: GameState, marble: Marble, steps: number): void {
   const plan = planMovement(state, marble, steps);
@@ -562,6 +595,7 @@ function moveWithLandingCapture(state: GameState, marble: Marble, steps: number)
   // Entering home is never a capture - a home stretch is private to its owner, so nothing
   // else can be sitting there to bump.
   marble.location = plan.location;
+  leaveStartProtection(marble);
   markLappedIfAtOwnStart(state, marble);
 }
 
@@ -574,6 +608,7 @@ function moveWithPassOverCapture(state: GameState, marble: Marble, steps: number
     if (occupant && occupant.id !== marble.id) sendToKennel(state, occupant);
   }
   marble.location = plan.location;
+  leaveStartProtection(marble);
   markLappedIfAtOwnStart(state, marble);
 }
 

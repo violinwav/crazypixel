@@ -55,6 +55,22 @@ const TRACK_TILE_GAP = 0.68;
 // details. Below the original 4-player length so 4P gets some shrink too, not just 6P.
 const REFERENCE_TRACK_LENGTH = 48;
 
+// --- Base-guard reticle ---------------------------------------------------
+// Four corner brackets framing a marble that is still protected on the start square it
+// entered on (marble.startProtected). Deliberately a frame and not a glow or a pulse: it
+// marks a *rule*, not an event, it sits still for as long as the rule holds, and it has to
+// stay legible with four marbles clustered on adjacent squares.
+//
+// Reference px, scaled by pieceScale like every other piece dimension here.
+const GUARD_GAP = 4;
+const GUARD_ARM = 8;
+const GUARD_WEIGHT = 3;
+// Drawn as a dark outline with a white core, because the bracket crosses three different
+// backgrounds on its way round a marble (black board field, a half-white quarter tile, the
+// white start tile itself). A single flat color reads on some of those and vanishes on the
+// rest; the two-tone pixel edge carries on all of them.
+const GUARD_OUTLINE = 1;
+
 // --- Motion ---------------------------------------------------------------
 
 const MOVE_TWEEN_MS = 220;
@@ -196,6 +212,12 @@ export class TableScene extends Phaser.Scene {
    */
   private trailLayer?: Phaser.GameObjects.Container;
   private marbleLayer?: Phaser.GameObjects.Container;
+  /**
+   * Base-guard reticles. Above the marbles rather than below: the brackets sit outside a
+   * marble's silhouette, so nothing is hidden either way, and drawing on top guarantees the
+   * frame is never clipped by a neighbouring piece.
+   */
+  private guardLayer?: Phaser.GameObjects.Container;
 
   private geo: BoardGeometry = {
     center: { x: 0, y: 0 },
@@ -209,6 +231,8 @@ export class TableScene extends Phaser.Scene {
     rotation: 0,
   };
   private marbleSprites = new Map<string, Phaser.GameObjects.Image>();
+  /** marble id -> its reticle, for the marbles currently carrying start protection. */
+  private guardMarks = new Map<string, Phaser.GameObjects.Graphics>();
   /** hue -> generated texture key, filled lazily by tintedMarbleKey. */
   private marbleTextureCache = new Map<number, string>();
   private pendingPlan: MarbleAnimation[] = [];
@@ -257,6 +281,7 @@ export class TableScene extends Phaser.Scene {
     // marks, and the marble paints over its own trail.
     this.trailLayer = this.add.container(0, 0);
     this.marbleLayer = this.add.container(0, 0);
+    this.guardLayer = this.add.container(0, 0);
 
     this.layout();
     this.scale.on('resize', this.layout, this);
@@ -326,6 +351,7 @@ export class TableScene extends Phaser.Scene {
     this.syncTurnGlow();
     this.redrawBoard();
     this.updateMarbles(animate);
+    this.updateGuards(animate);
     this.updateDecor();
   }
 
@@ -512,6 +538,72 @@ export class TableScene extends Phaser.Scene {
       if (!seen.has(id)) {
         sprite.destroy();
         this.marbleSprites.delete(id);
+      }
+    }
+  }
+
+  // --- Base-guard reticle -------------------------------------------------
+
+  /**
+   * Frames every marble still protected on the square it entered on, and unframes the rest.
+   *
+   * A protected marble is stationary by definition - the rule ends the moment that marble
+   * moves - so a reticle never has to follow a tween. It only has to appear after the marble
+   * it frames has arrived, which is what the delay on the fade-in below is for.
+   *
+   * Geometry is re-drawn rather than just re-positioned, because pieceScale changes on a
+   * resize and a Graphics object bakes its path in at draw time.
+   */
+  private updateGuards(animate: boolean) {
+    if (!this.guardLayer || !this.state) return;
+    const guarded = new Set(this.state.marbles.filter((m) => m.startProtected).map((m) => m.id));
+
+    for (const [id, mark] of this.guardMarks) {
+      if (guarded.has(id)) continue;
+      this.tweens.killTweensOf(mark);
+      mark.destroy();
+      this.guardMarks.delete(id);
+    }
+
+    for (const marble of this.state.marbles) {
+      if (!marble.startProtected) continue;
+      const { x, y } = this.marblePoint(marble);
+      const existing = this.guardMarks.get(marble.id);
+      const mark = existing ?? this.add.graphics();
+      this.drawGuardBrackets(mark);
+      mark.setPosition(x, y);
+      if (existing) continue;
+      this.guardLayer.add(mark);
+      this.guardMarks.set(marble.id, mark);
+      if (animate) {
+        // The marble is still tweening out of its kennel when this is first drawn, and the
+        // frame belongs to where it lands, not to the empty square it is heading for.
+        mark.setAlpha(0);
+        this.tweens.add({ targets: mark, alpha: 1, duration: MOVE_TWEEN_MS, delay: MOVE_TWEEN_MS });
+      }
+    }
+  }
+
+  /** Redraws `mark` as four corner brackets centered on its own origin, at current scale. */
+  private drawGuardBrackets(mark: Phaser.GameObjects.Graphics) {
+    const scale = this.pieceScale;
+    const half = (MARBLE_SIZE / 2 + GUARD_GAP) * scale;
+    const arm = GUARD_ARM * scale;
+    const weight = Math.max(1, GUARD_WEIGHT * scale);
+    const outline = Math.max(1, GUARD_OUTLINE * scale);
+
+    mark.clear();
+    for (const sx of [-1, 1]) {
+      for (const sy of [-1, 1]) {
+        // Each corner is one horizontal and one vertical arm sharing an outer corner pixel.
+        for (const [w, h] of [[arm, weight], [weight, arm]] as const) {
+          const x = sx > 0 ? half - w : -half;
+          const y = sy > 0 ? half - h : -half;
+          mark.fillStyle(MARBLE_BORDER_COLOR, 1);
+          mark.fillRect(x - outline, y - outline, w + outline * 2, h + outline * 2);
+          mark.fillStyle(PALETTE.ink, 1);
+          mark.fillRect(x, y, w, h);
+        }
       }
     }
   }

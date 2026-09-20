@@ -141,7 +141,7 @@ export const GOAL_DEMO: TrackDemo = {
       ],
     },
     {
-      caption: 'A starting card puts one on your own start square, where it also blocks the way for everyone.',
+      caption: 'A starting card puts one on your own start square, where it is untouchable and blocks the way for everyone - until it moves off.',
       marbles: [
         { id: 'you', role: 'you', at: track(0) },
         { id: 'rival', role: 'rival', at: track(9) },
@@ -266,7 +266,7 @@ export const RULE_CARDS: RuleCard[] = [
           ],
         },
         {
-          caption: 'One of the two has to be yours, and a marble still guarding its own start square is off limits.',
+          caption: 'One of the two has to be yours, and a marble still fresh out of the kennel on its own start square is off limits.',
           marbles: [
             { id: 'you', role: 'you', at: track(10) },
             { id: 'rival', role: 'rival', at: track(3) },
