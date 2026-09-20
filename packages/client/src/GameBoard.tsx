@@ -18,6 +18,7 @@ import { computeBoardGeometry, discardPileCenter, drawPileCenter, handCountPoint
 import { HandPanel } from './HandPanel';
 import { BoardOverlay } from './BoardOverlay';
 import { BoardStatus } from './BoardStatus';
+import { BoardGuards } from './BoardGuards';
 import { OpponentHandCounts } from './OpponentHandCounts';
 import { LaidCard } from './LaidCard';
 import { TurnLabel } from './TurnLabel';
@@ -431,11 +432,22 @@ export function GameBoard({
     if (!prev) return;
     // A re-deal doesn't move marbles, but a rematch swaps the whole board out from under this.
     if (prev.marbles.length !== state.marbles.length) return;
+    // ...and a rematch keeps the same seats and the same marble count, so the length test above
+    // never sees it: every marble that was out goes track -> kennel at once, which diffs as a
+    // board-wide massacre. gameEnd -> anything is the only transition that can do it (the
+    // engine never leaves gameEnd on its own) - the same test, and the same reason, as
+    // useOnlineGameState's isRematch.
+    if (prev.phase === 'gameEnd' && state.phase !== 'gameEnd') return;
 
     const before = new Map(prev.marbles.map((m) => [m.id, m.location.zone]));
     const captured = state.marbles.filter((m) => m.location.zone === 'kennel' && before.get(m.id) === 'track');
     const arrived = state.marbles.filter((m) => m.location.zone === 'home' && before.get(m.id) === 'track');
-    if (captured.length === 0 && arrived.length === 0) {
+    // Nothing else narrates a guard: lastMoveAnnouncement names the CARD, not the move, so
+    // "played Ace of spades" is equally true of a bring-out and a forward 11.
+    const guardedBefore = new Set(prev.marbles.filter((m) => m.startProtected).map((m) => m.id));
+    const gainedGuard = state.marbles.filter((m) => m.startProtected && !guardedBefore.has(m.id));
+    const lostGuard = state.marbles.filter((m) => !m.startProtected && guardedBefore.has(m.id));
+    if (captured.length === 0 && arrived.length === 0 && gainedGuard.length === 0 && lostGuard.length === 0) {
       // Cleared rather than left standing. A live region only announces what MUTATED, so a
       // capture line left in place from two moves ago would stay silent the next time the
       // identical capture happened - and until then it sits in the region as a description of
@@ -460,6 +472,21 @@ export function GameBoard({
       const total = state.marbles.filter((m) => m.owner === owner && m.location.zone === 'home').length;
       const marbles = total === 1 ? '1 marble' : `${total} marbles`;
       lines.push(owner === mySeat ? `You have ${marbles} home.` : `${playerLabel(playerNames, owner)} has ${marbles} home.`);
+    }
+
+    // A guard arriving narrows what every seat may legally do, and it arrives on someone
+    // else's turn, so no later moment would reveal it - every seat hears it.
+    for (const m of gainedGuard) {
+      lines.push(m.owner === mySeat
+        ? 'Your start square is guarded until that marble moves.'
+        : `${playerLabel(playerNames, m.owner)}'s start square is guarded.`);
+    }
+    // A guard ending only *widens* the options, and every other seat rediscovers that from the
+    // moves the overlay offers them next turn. Your own is the exception: the block you were
+    // relying on is gone and nothing else on screen recorded it.
+    for (const m of lostGuard) {
+      if (m.owner !== mySeat) continue;
+      lines.push('Your start square is no longer guarded.');
     }
 
     // Held back so the cue lands first and clears. There is no way to know when a screen reader
@@ -646,6 +673,9 @@ export function GameBoard({
           poppingSeat={fanPop}
           spentCard={spentCard}
         />
+        {/* Board state, always present, never a control - same standing as OpponentHandCounts
+            above it. Screen-reader only: the visible form of this is TableScene's reticle. */}
+        <BoardGuards state={state} mySeat={mySeat} playerNames={playerNames} />
         {laidCard && (
           <LaidCard
             key={laidCard.id}

@@ -3,6 +3,12 @@
 
 import { planMovement } from '@crazypixel/shared';
 import type { GameState, Marble, Move } from '@crazypixel/shared';
+import { GUARD_MOVE_SUFFIX } from './describeGuard';
+
+/** Does this move take a marble off the start square it is still guarding? */
+function spendsGuard(state: GameState, marbleIds: string[]): boolean {
+  return marbleIds.some((id) => state.marbles.find((m) => m.id === id)?.startProtected);
+}
 
 function marbleLabel(state: GameState, marbleId: string): string {
   const marble = state.marbles.find((m) => m.id === marbleId);
@@ -23,10 +29,13 @@ export function describeMove(move: Move, state: GameState): string {
     case 'moveMarble': {
       const marble = state.marbles.find((m) => m.id === move.marbleId);
       const destText = marble ? describeDestination(state, marble, move.steps) : '';
-      return `Move ${marbleLabel(state, move.marbleId)} ${move.steps > 0 ? 'forward' : 'backward'} ${Math.abs(move.steps)}${destText}`;
+      const guardText = spendsGuard(state, [move.marbleId]) ? GUARD_MOVE_SUFFIX : '';
+      return `Move ${marbleLabel(state, move.marbleId)} ${move.steps > 0 ? 'forward' : 'backward'} ${Math.abs(move.steps)}${destText}${guardText}`;
     }
-    case 'splitSeven':
-      return `Split 7: ${move.steps.map((s) => `${marbleLabel(state, s.marbleId)} +${s.steps}`).join(', ')}`;
+    case 'splitSeven': {
+      const guardText = spendsGuard(state, move.steps.map((s) => s.marbleId)) ? GUARD_MOVE_SUFFIX : '';
+      return `Split 7: ${move.steps.map((s) => `${marbleLabel(state, s.marbleId)} +${s.steps}`).join(', ')}${guardText}`;
+    }
     case 'swapJack': {
       const a = state.marbles.find((m) => m.id === move.marbleIdA);
       const b = state.marbles.find((m) => m.id === move.marbleIdB);

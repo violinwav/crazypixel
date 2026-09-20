@@ -7,6 +7,7 @@ import { KENNEL_SIZE, trackLengthFor } from '@crazypixel/shared';
 import type { GameState, Move } from '@crazypixel/shared';
 import { handCountPoint, homeSlotPoint, kennelSlotPoint, trackPoint } from './boardLayout';
 import type { BoardGeometry, Point } from './boardLayout';
+import { GUARD_FIGURE_SUFFIX } from './describeGuard';
 
 export interface Figure {
   key: string;
@@ -41,8 +42,12 @@ function marbleFigure(state: GameState, marbleId: string, geo: BoardGeometry): F
   const point = marble.location.zone === 'track'
     ? trackPoint(marble.location.index, trackLengthFor(state.config), geo)
     : homeSlotPoint(state.config, marble.owner, marble.location.index, geo);
+  // The guard note belongs in the button's NAME, not a description: moving this marble
+  // permanently spends a protection that can never be earned again, and descriptions are what
+  // NVDA and JAWS drop first at lower verbosity. Only the track branch can ever carry it - a
+  // home-stretch marble has no start square to guard.
   const label = marble.location.zone === 'track'
-    ? `Marble on square ${marble.location.index}`
+    ? `Marble on square ${marble.location.index}${marble.startProtected ? GUARD_FIGURE_SUFFIX : ''}`
     : `Marble in your home stretch, slot ${marble.location.index + 1}`;
   return { key: `marble:${marble.id}`, point, label };
 }

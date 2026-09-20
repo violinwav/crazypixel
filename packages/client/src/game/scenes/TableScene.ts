@@ -65,11 +65,24 @@ const REFERENCE_TRACK_LENGTH = 48;
 const GUARD_GAP = 4;
 const GUARD_ARM = 8;
 const GUARD_WEIGHT = 3;
-// Drawn as a dark outline with a white core, because the bracket crosses three different
-// backgrounds on its way round a marble (black board field, a half-white quarter tile, the
-// white start tile itself). A single flat color reads on some of those and vanishes on the
-// rest; the two-tone pixel edge carries on all of them.
+/**
+ * Drawn as a dark edge around a white core, and the reason is the *neighbouring* marbles, not
+ * the tile underneath: this frame reaches 16 reference px from its marble's center while
+ * adjacent track squares sit ~22 (4P) to ~14 (6P) reference px apart, so on a busy ring it
+ * paints straight over the marble next door - and guardLayer is above marbleLayer, so it is
+ * always the bracket on top. No single flat ink survives that. White alone is 1.18:1 on the
+ * lightest marble facet; the darkest marble tone rules out every grey bright enough to clear
+ * 3:1 on the black board field. White core plus a MARBLE_BORDER_COLOR edge always leaves one
+ * of the two tones at 4.5:1 or better against anything the board can put behind it.
+ *
+ * (It does NOT cross the white start tile - that tile's half-extent is ~5.6 reference px,
+ * well inside where the brackets begin. Don't "fix" GUARD_GAP on that theory.)
+ */
 const GUARD_OUTLINE = 1;
+// CSS-px floors. pieceScale bottoms out near 0.48 on a 360px-wide phone, which turns an
+// 8/3/1 reference bracket into 3.8/1.4/0.5 px - four specks rather than a frame.
+const GUARD_MIN_ARM = 5;
+const GUARD_MIN_WEIGHT = 2;
 
 // --- Motion ---------------------------------------------------------------
 
@@ -175,6 +188,10 @@ function chamferedSquarePoints(size: number, cutRatio: number): { x: number; y: 
     { x: 0, y: size - cut },
     { x: 0, y: cut },
   ];
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export class TableScene extends Phaser.Scene {
@@ -571,11 +588,17 @@ export class TableScene extends Phaser.Scene {
       const existing = this.guardMarks.get(marble.id);
       const mark = existing ?? this.add.graphics();
       this.drawGuardBrackets(mark);
-      mark.setPosition(x, y);
+      mark.setPosition(Math.round(x), Math.round(y));
       if (existing) continue;
       this.guardLayer.add(mark);
       this.guardMarks.set(marble.id, mark);
-      if (animate) {
+      // theme.css's blanket prefers-reduced-motion rule only reaches CSS - a Phaser tween has
+      // to ask for itself. The frame still has to wait for the marble either way, so reduced
+      // motion gets the same delay with no fade.
+      if (animate && prefersReducedMotion()) {
+        mark.setAlpha(0);
+        this.time.delayedCall(MOVE_TWEEN_MS, () => mark.setAlpha(1));
+      } else if (animate) {
         // The marble is still tweening out of its kennel when this is first drawn, and the
         // frame belongs to where it lands, not to the empty square it is heading for.
         mark.setAlpha(0);
@@ -584,28 +607,42 @@ export class TableScene extends Phaser.Scene {
     }
   }
 
-  /** Redraws `mark` as four corner brackets centered on its own origin, at current scale. */
+  /**
+   * Redraws `mark` as four corner brackets centered on its own origin, at current scale.
+   *
+   * Every dimension is rounded to whole pixels, and so is the position this is drawn at (see
+   * updateGuards). Phaser's `pixelArt: true` only turns off smoothing for drawImage - a
+   * Graphics fillRect is a real Canvas2D path and antialiases on fractional coordinates
+   * regardless. That matters here more than anywhere else on the board: a 1px dark edge split
+   * across two rows renders at roughly half alpha, and over a light marble the blend lands
+   * around 2.5:1 - failing exactly when the frame overlaps a neighbour, which is the case the
+   * dark edge exists for. The reticle never moves, so rounding costs nothing.
+   */
   private drawGuardBrackets(mark: Phaser.GameObjects.Graphics) {
     const scale = this.pieceScale;
-    const half = (MARBLE_SIZE / 2 + GUARD_GAP) * scale;
-    const arm = GUARD_ARM * scale;
-    const weight = Math.max(1, GUARD_WEIGHT * scale);
-    const outline = Math.max(1, GUARD_OUTLINE * scale);
+    const half = Math.round((MARBLE_SIZE / 2 + GUARD_GAP) * scale);
+    const arm = Math.round(Math.max(GUARD_MIN_ARM, GUARD_ARM * scale));
+    const weight = Math.round(Math.max(GUARD_MIN_WEIGHT, GUARD_WEIGHT * scale));
+    const outline = Math.round(Math.max(1, GUARD_OUTLINE * scale));
 
-    mark.clear();
+    // Each corner is one horizontal and one vertical arm sharing an outer corner pixel.
+    const arms: [number, number, number, number][] = [];
     for (const sx of [-1, 1]) {
       for (const sy of [-1, 1]) {
-        // Each corner is one horizontal and one vertical arm sharing an outer corner pixel.
         for (const [w, h] of [[arm, weight], [weight, arm]] as const) {
-          const x = sx > 0 ? half - w : -half;
-          const y = sy > 0 ? half - h : -half;
-          mark.fillStyle(MARBLE_BORDER_COLOR, 1);
-          mark.fillRect(x - outline, y - outline, w + outline * 2, h + outline * 2);
-          mark.fillStyle(PALETTE.ink, 1);
-          mark.fillRect(x, y, w, h);
+          arms.push([sx > 0 ? half - w : -half, sy > 0 ? half - h : -half, w, h]);
         }
       }
     }
+
+    // Every outline first, then every core - not outline-then-core per arm. Drawn per arm, the
+    // second arm's outline paints a dark seam straight through the corner the two share, and
+    // the bracket reads as two detached ticks instead of one L.
+    mark.clear();
+    mark.fillStyle(MARBLE_BORDER_COLOR, 1);
+    for (const [x, y, w, h] of arms) mark.fillRect(x - outline, y - outline, w + outline * 2, h + outline * 2);
+    mark.fillStyle(PALETTE.ink, 1);
+    for (const [x, y, w, h] of arms) mark.fillRect(x, y, w, h);
   }
 
   /**
