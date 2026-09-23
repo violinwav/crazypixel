@@ -36,10 +36,10 @@ PALETTE = {
     "suit_dark": (0x00, 0x00, 0x00),
     "suit_red": (0xD2, 0x2C, 0x50),  # 4.98:1 against a white card face - don't lighten this
     # Card colors encode *rank group*, not suit (suit affects neither rules nor art). A and K
-    # share one color - both are "start a marble", same weight - and the DOM rank text on top
-    # is what disambiguates them. The house-rule ranks (2/4/7/8/J/JOKER) get their own loud
-    # color plus a hand-drawn icon; every other rank gets a quieter flat tone with just the
-    # bevel texture. "Crazy" is reserved for the cards that actually do something crazy.
+    # share one color - both are "start a marble", same weight - but each gets its own icon so
+    # they stay tellable apart at a glance. Every rank that does more than just move (A/K
+    # start, 2/4/7/8/J/JOKER house rules) gets a loud color plus a hand-drawn icon; every
+    # other rank gets a quieter flat tone with just the bevel texture.
     "card_high": (0xF4, 0xC4, 0x30),  # A, K - gold
     "card_2": (0xFF, 0x2D, 0x95),  # steal
     "card_4": (0x2D, 0xE0, 0xD8),  # forward/backward
@@ -455,6 +455,25 @@ def _icon_swap(draw, cx, cy, ink):
         draw.ellipse([cx + dx - 2, cy + dy - 2, cx + dx + 2, cy + dy + 2], fill=(*ink, 255))
 
 
+def _icon_spade(draw, cx, cy, ink):
+    """Ace: the one big pip a real deck's ace carries. Row spans are offsets from cx."""
+    body = [[(-h, h)] for h in (0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 9, 8)]
+    # The lobes part around a 3px neck (same weight as every other icon's stroke), then the
+    # stem flares out below. make_spade's 16px grid is too small and too thin at this size.
+    tail = [[(-7, -2), (-1, 1), (2, 7)], [(-5, -3), (-1, 1), (3, 5)]] + [[(-h, h)] for h in (1, 2, 3, 4)]
+    for i, spans in enumerate(body + tail):
+        for a, b in spans:
+            draw.line([(cx + a, cy - 11 + i), (cx + b, cy - 11 + i)], fill=(*ink, 255))
+
+
+def _icon_crown(draw, cx, cy, ink):
+    """King: a three-point crown."""
+    draw.polygon(
+        [(cx - 10, cy + 6), (cx - 10, cy - 6), (cx - 5, cy), (cx, cy - 8), (cx + 5, cy), (cx + 10, cy - 6), (cx + 10, cy + 6)],
+        fill=(*ink, 255),
+    )
+
+
 def _make_joker_face():
     # Craziest of all - a dithered mosaic of every player color, no icon needed.
     g = Image.new("RGBA", (CARD_W, CARD_H), (*PALETTE["bg_deep"], 255))
@@ -471,6 +490,8 @@ def _make_joker_face():
 
 # rank -> (palette key, icon drawer). Ranks absent here fall back to card_plain, no icon.
 _ICON_CARDS = {
+    "A": ("card_high", _icon_spade),
+    "K": ("card_high", _icon_crown),
     "2": ("card_2", _icon_burst),
     "4": ("card_4", _icon_double_arrow),
     "7": ("card_7", _icon_fork),
@@ -482,9 +503,6 @@ _ICON_CARDS = {
 def make_card_face(rank):
     if rank == "JOKER":
         return _make_joker_face()
-    if rank in ("A", "K"):
-        g, _ = _card_base(PALETTE["card_high"])
-        return g
     if rank in _ICON_CARDS:
         palette_key, draw_icon = _ICON_CARDS[rank]
         color = PALETTE[palette_key]
