@@ -86,6 +86,11 @@
      board's bottom edge, so an overlay at a bare bottom:12px lands directly on that text.
      One token rather than three numbers, so moving that text is reconciled in one place. */
   --board-bottom-clearance: 48px;
+  /* The 7 allocator's right-hand rail, and the column every other bottom-anchored overlay
+     control has to stay out of. Read by .seven-rail itself and by
+     .board-overlay__seven-actions, which centres inside what is left - they share a bottom
+     edge, so a row that reaches into this column lands on top of the slider. */
+  --seven-rail-width: 64px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -544,9 +549,12 @@ body {
 .board-status__pass {
   position: absolute;
   transform: translate(-50%, -50%);
-  /* Matches .board-overlay__seven-confirm's font-size, padding, border and label color - both
-     are "commit to this" board controls and should read as the same kind of thing. The one
-     thing deliberately NOT copied is that rule's min-width/min-height: 0. Seven-confirm sits
+  /* Matches .board-overlay__seven-reset's font-size, padding, border and label color - the
+     outlined-red treatment, which is what a board control that is available but not the happy
+     path looks like here. Seven-CONFIRM is the filled green one and deliberately not the model:
+     a filled primary is the one action the player is being pushed toward, and this is a way out
+     of being stuck, not a recommendation. The one thing deliberately NOT copied from that row is
+     its min-width/min-height: 0. Those buttons sit
      in a cramped overlay row where the 44px floors break the layout; this is a standalone
      control with room around it, and zeroing them here shrinks it to roughly 31px tall - under
      the touch-target minimum, for the only thing a stuck player can tap. */
@@ -831,7 +839,7 @@ body {
      trackRadius to about 0.29W - so past ~100px the rail starts covering one of those buttons
      ENTIRELY, which is the line between WCAG 2.4.11 passing and failing. At 72px the worst
      case clips about 8px off a 44px button and its focus ring stays visible. */
-  width: 64px;
+  width: var(--seven-rail-width);
   display: flex;
   flex-direction: column;
   /* Contents stack up from the bottom edge, so the slider's foot stays pinned there and any
@@ -964,36 +972,130 @@ body {
 
 .board-overlay__seven-actions {
   position: absolute;
-  left: 50%;
+  /* Centred by auto margins on a full-width inset, NOT by left:50% + translateX. The transform
+     recentres visually but leaves layout thinking the box starts at the midpoint, so an
+     absolutely-positioned element's shrink-to-fit width is capped at HALF the board - which a
+     two-button row overflowed harmlessly, and a three-button wrapping row turned into three
+     stacked lines on a phone. width:fit-content keeps the click-blocking strip no wider than
+     the buttons themselves (this container is the one thing inside .board-overlay that takes
+     pointer events back, so a full-width strip here would eat taps on the board beneath it). */
+  left: 0;
+  /* Stops short of the rail's column rather than spanning the full board: this row and
+     .seven-rail share a bottom edge, and this one paints later, so anything reaching into that
+     column lands on top of the slider - the one control in the overlay the player drags. At
+     375px the untrimmed row buried 27x38px of the slider's lower travel, obscuring it for a
+     pointer and for a focus ring alike (WCAG 2.4.11). Auto margins then centre the row inside
+     what is left, which is also why it sits slightly left of the board's axis on a phone. */
+  right: calc(var(--seven-rail-width) + var(--space-xs) + var(--space-sm));
   /* Bottom-center is free now that the slider moved to the rail, so confirm sits at the
      shortest reach from the hand panel instead of stacked three controls up. */
   bottom: var(--board-bottom-clearance);
-  transform: translateX(-50%);
+  width: fit-content;
+  max-width: calc(100% - 2 * var(--space-sm));
+  margin: 0 auto;
   display: flex;
+  align-items: stretch;
+  /* One line at 375px and up; at 320px it wraps to two, which is the right trade against
+     reaching into the rail's column. The wrap is the deliberate fallback rather than an
+     overflow - the row is centred, so an overflow would run off BOTH edges at once. */
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 8px;
+  /* Same docked chrome as .seven-rail, for the same reason: these sit over painted board
+     squares and laid cards, and a bare button edge disappears into that. Translucent so the
+     board underneath stays readable. */
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.72);
+  border: 2px solid var(--ink);
   pointer-events: auto;
 }
 
+/* Proposing is a different job from committing, and the rule is the cheapest way to say so.
+   Decorative, hence aria-hidden in the markup.
+
+   It is a rigid fourth flex item (grow 0, shrink 0), so it wraps exactly like a button: on a row
+   that does break, it strands at the end of one line as a stretched 2px tick separating nothing.
+   Left as-is deliberately - CSS cannot ask whether a flex line broke, and a width media query
+   would only cover the narrow-viewport half while missing the one that actually triggers it here
+   (text zoom, which grows the buttons without changing the viewport). Measured: one line at
+   375px and up, two at 320px - and on that wrapped row the divider does land last on line one,
+   between Auto split and Confirm, which is where it belongs anyway. Do not re-add a claim that
+   it hides itself. */
+.board-overlay__seven-divider {
+  flex: 0 0 2px;
+  align-self: stretch;
+  background: var(--ink-dim);
+}
+
+.board-overlay__seven-autofill,
 .board-overlay__seven-reset,
 .board-overlay__seven-confirm {
   font-size: 0.8rem;
   padding: 0.4em 0.8em;
+  /* .cp-button's 44px floors would push this row past the board's width on a phone. The rail
+     and the hand panel are the large targets on this screen; these three are confirmations. */
   min-width: 0;
   min-height: 0;
 }
 
-.board-overlay__seven-confirm {
+/* Reserving the rail's column leaves this row about 283px on a 375px phone, and its natural
+   width is ~305px - so without this it wraps to two lines there, which is worse than the
+   overlap the reservation fixed. Trimming the row's own chrome (button padding, gaps, panel
+   padding) buys back the ~25px, and the labels themselves stay untouched: shrinking the type
+   would have been the easy 15px and the wrong one.
+
+   AFTER the base rule on purpose: a media query adds no specificity, so this override is
+   decided on source order alone - hoist it above and it silently stops applying. */
+@media (max-width: 460px) {
+  .board-overlay__seven-actions {
+    gap: 6px;
+    padding: 5px 6px;
+  }
+
+  .board-overlay__seven-autofill,
+  .board-overlay__seven-reset,
+  .board-overlay__seven-confirm {
+    padding: 0.4em 0.55em;
+  }
+}
+
+
+
+/* The one committing action, so it is the one that is FILLED rather than outlined. Fill vs
+   outline is the point: green-vs-red is the classic confounded pair under deuteranopia and
+   protanopia, and this row puts the commit and the destroy side by side. The labels carry the
+   meaning outright, the fill difference survives any colour vision, and the colour is the
+   third signal rather than the only one (WCAG 1.4.1).
+
+   Black on --player-green is 12.77:1. Green as TEXT on .cp-button's white fill would have been
+   1.64:1 - not a near miss, and the reason this is a fill at all. */
+.board-overlay__seven-confirm:not([aria-disabled='true']) {
+  background: var(--player-green);
+  border-color: var(--bg-deep);
+  color: var(--bg-deep);
+}
+
+/* Outlined, not filled: destructive, so it should read as available rather than inviting.
+   --card-red on the white fill is 4.98:1. */
+.board-overlay__seven-reset:not([aria-disabled='true']) {
   border-color: var(--card-red);
   color: var(--card-red);
 }
 
-/* aria-disabled, not `disabled` - the button stays focusable and announces its state, so this
-   is the only thing that has to say "not yet" visually. */
-.board-overlay__seven-confirm[aria-disabled='true'] {
-  border-color: var(--ink-dim);
-  color: var(--ink-dim);
+/* aria-disabled, not `disabled` - the button stays focusable and announces its state. The
+   :not() guards above are what hand the inert look back to .cp-button[aria-disabled='true']
+   (--ink-dim on --bg-raised, 4.9:1) without a specificity fight over the background. */
+.board-overlay__seven-confirm[aria-disabled='true'],
+.board-overlay__seven-reset[aria-disabled='true'] {
   cursor: not-allowed;
 }
+
+/* Deliberately NOT recoloured - the neutral of the three. The obvious choice was
+   --player-blue, to match the rail's selection colour, but that is 2.37:1 on .cp-button's white
+   fill and fails 1.4.3 outright, and the palette is hand-synced across three files (see
+   CLAUDE.md) so this is not the place to invent a darker blue. Leaving it plain is also what
+   makes the row legible at a glance: one filled green commit, one red-outlined destroy, and
+   this - which only ever proposes. */
 
 /* A real <input type="range"> for keyboard and screen-reader semantics, hidden with opacity
    (not display:none, so it stays interactive) over a row of decorative blocky notches that

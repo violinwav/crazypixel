@@ -489,6 +489,14 @@ function generateSevenSplits(state: GameState, eligible: Marble[], total: number
       const rest = remaining.slice(0, i).concat(remaining.slice(i + 1));
       const scratchMarble = scratch.marbles.find((m) => m.id === marble.id);
       if (!scratchMarble) continue;
+      // An earlier segment may have run this marble over and kennelled it - the 7's pass-over
+      // capture doesn't spare your own side. planMovement has no kennel case, so it read the
+      // kennel slot as a track index and walked the marble back out onto the board: the split
+      // both killed your marble and teleported it. Re-checking the zone against the scratch
+      // board (not the starting one, where every eligible marble is on track or home by
+      // construction) is what keeps a dead segment out of the search - and it also stops a
+      // bogus order shadowing the good one, since the dedupe key is order-insensitive.
+      if (scratchMarble.location.zone === 'kennel') continue;
       for (let use = 1; use <= left; use++) {
         if (!isMoveClear(scratch, scratchMarble, use)) continue;
         acc.push({ marbleId: marble.id, steps: use });
@@ -499,6 +507,148 @@ function generateSevenSplits(state: GameState, eligible: Marble[], total: number
   }
   recurse(eligible, total);
   return results;
+}
+
+/**
+ * Which squares each segment of a 7 split burns, per marble, walked in the order the split
+ * will really run in.
+ *
+ * captureIndicesFor measures one segment against the board as it stands NOW, which is all a
+ * half-built allocation can be measured against - but once the allocation is a complete move
+ * the order is known, and the two answers differ: a segment that crosses a square an earlier
+ * segment already vacated captures nothing there, and the per-segment view claims it does.
+ * Over-warning is the wrong failure for a control whose promise is "this won't cost you a
+ * marble", so the preview switches to this the moment it can.
+ */
+export function sevenSplitSegmentCaptures(state: GameState, move: Move): { marbleId: string; indices: number[] }[] {
+  const split = move.kind === 'splitSeven' ? move
+    : move.kind === 'wildAs' || move.kind === 'copyLastCard' ? unwrapToSplitSeven(move.innerMove)
+    : null;
+  if (!split) return [];
+  const scratch = cloneMarbles(state);
+  return split.steps.map((segment) => {
+    const marble = scratch.marbles.find((m) => m.id === segment.marbleId);
+    if (!marble) return { marbleId: segment.marbleId, indices: [] };
+    const indices = captureIndicesFor(scratch, marble, segment.steps, 'passOver');
+    moveWithPassOverCapture(scratch, marble, segment.steps);
+    return { marbleId: segment.marbleId, indices };
+  });
+}
+
+function unwrapToSplitSeven(move: Move): Extract<Move, { kind: 'splitSeven' }> | null {
+  if (move.kind === 'splitSeven') return move;
+  if (move.kind === 'wildAs' || move.kind === 'copyLastCard') return unwrapToSplitSeven(move.innerMove);
+  return null;
+}
+
+// --- Autofill: ranking 7-splits that drive marbles home --------------------
+
+/**
+ * How far along its own route a marble stands, on one monotone scale: kennel behind the
+ * start square, then its lap position, then the home stretch beyond the end of the lap. Used
+ * only to compare two hypothetical boards - the absolute numbers mean nothing on their own.
+ *
+ * A marble parked on its own start square with a lap banked scores a full lap, matching
+ * planMovement's atEntrance: it is one step from turning in, not back at square one. Walking
+ * past that entrance therefore reads as the big regression it actually is, which is what
+ * stops autofill from dumping leftover steps on a marble that was ready to come home.
+ */
+function advancementOf(config: GameConfig, marble: Marble): number {
+  const trackLength = trackLengthFor(config);
+  if (marble.location.zone === 'kennel') return -1;
+  if (marble.location.zone === 'home') return trackLength + 1 + marble.location.index;
+  const lapPos = ((marble.location.index - startIndexFor(config, marble.owner)) % trackLength + trackLength) % trackLength;
+  return lapPos === 0 && marble.hasLapped ? trackLength : lapPos;
+}
+
+/** The marbles a 7 split is played on behalf of: the player's own, plus their partner's in
+ * teams mode - the same set getLegalMoves hands to generateSevenSplits as eligible. */
+function friendlyMarbles(state: GameState, player: PlayerId): Marble[] {
+  const partner = partnerOf(state.config, player);
+  return state.marbles.filter((m) => m.owner === player || (partner !== null && m.owner === partner));
+}
+
+export interface SevenSplitOutcome {
+  /** Friendly marbles that were NOT in a home stretch before and are after. */
+  marblesHomed: number;
+  /** Friendly marbles this split would send back to the kennel - the 7's pass-over capture
+   * hits your own side just as hard as an opponent's, which is the mistake autofill exists
+   * to make impossible. Any candidate scoring above 0 here is dropped, never ranked. */
+  friendlyKenneled: number;
+  /** Net advancement gained across every friendly marble (see advancementOf). */
+  progress: number;
+  opponentsKenneled: number;
+}
+
+/**
+ * What `segments` would do to the board, from `player`'s side of it. Replays the split
+ * exactly as applyMove would (same pass-over capture, same order), so the outcome described
+ * here is the outcome the player will get.
+ */
+export function outcomeOfSevenSplit(
+  state: GameState,
+  player: PlayerId,
+  segments: { marbleId: string; steps: number }[],
+): SevenSplitOutcome {
+  const resolved = stateAfterSegments(state, segments);
+  const before = friendlyMarbles(state, player);
+  const after = friendlyMarbles(resolved, player);
+  const byId = new Map(after.map((m) => [m.id, m]));
+
+  let marblesHomed = 0;
+  let friendlyKenneled = 0;
+  let progress = 0;
+  for (const marble of before) {
+    const moved = byId.get(marble.id);
+    if (!moved) continue;
+    if (moved.location.zone === 'home' && marble.location.zone !== 'home') marblesHomed++;
+    if (moved.location.zone === 'kennel' && marble.location.zone !== 'kennel') friendlyKenneled++;
+    progress += advancementOf(state.config, moved) - advancementOf(state.config, marble);
+  }
+
+  const friendlyIds = new Set(before.map((m) => m.id));
+  const opponentsBefore = state.marbles.filter((m) => !friendlyIds.has(m.id));
+  const opponentsAfter = new Map(
+    resolved.marbles.filter((m) => !friendlyIds.has(m.id)).map((m) => [m.id, m]),
+  );
+  let opponentsKenneled = 0;
+  for (const marble of opponentsBefore) {
+    const moved = opponentsAfter.get(marble.id);
+    if (moved && moved.location.zone === 'kennel' && marble.location.zone !== 'kennel') opponentsKenneled++;
+  }
+
+  return { marblesHomed, friendlyKenneled, progress, opponentsKenneled };
+}
+
+/**
+ * The 7 splits worth proposing to a player who just wants their marbles home, best first.
+ *
+ * One filter, not two: splits that kennel the player's own (or their partner's) marble are
+ * dropped outright rather than ranked low, because that self-capture is the exact accident
+ * this exists to prevent and autofill must never be the thing that proposes it. Everything
+ * else stays in, including splits that finish nobody - on a board where no marble can reach
+ * the goal the best safe advance is still the answer to "just move them forward for me", and
+ * an empty result there is indistinguishable to the player from a broken button.
+ *
+ * Ranking: most marbles home, then most total advancement, then most opponents sent home.
+ * Ties fall back to the candidate's own position in `candidates`, which generateSevenSplits
+ * produces deterministically - so the same board always proposes the same order, and cycling
+ * through proposals is stable between presses.
+ */
+export function rankSevenSplitsForAutofill(
+  state: GameState,
+  player: PlayerId,
+  candidates: { marbleId: string; steps: number }[][],
+): { index: number; outcome: SevenSplitOutcome }[] {
+  return candidates
+    .map((segments, index) => ({ index, outcome: outcomeOfSevenSplit(state, player, segments) }))
+    .filter(({ outcome }) => outcome.friendlyKenneled === 0)
+    .sort((a, b) =>
+      b.outcome.marblesHomed - a.outcome.marblesHomed
+      || b.outcome.progress - a.outcome.progress
+      || b.outcome.opponentsKenneled - a.outcome.opponentsKenneled
+      || a.index - b.index,
+    );
 }
 
 // --- Applying a move ------------------------------------------------------

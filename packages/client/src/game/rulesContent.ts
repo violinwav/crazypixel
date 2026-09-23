@@ -362,7 +362,7 @@ export const RULE_CARDS: RuleCard[] = [
         },
       ],
     },
-    note: 'In Partners mode the steps may go on your partner’s marbles as well as your own.',
+    note: 'Auto split proposes the best way home, or the furthest safe advance when nothing can finish — press again for the next option, and nothing is played until you confirm. In Partners mode the steps may go on your partner’s marbles as well as your own.',
   },
   { rank: '6', name: 'Six', summary: 'Move 6.', demo: plainMove(6) },
   { rank: '5', name: 'Five', summary: 'Move 5.', demo: plainMove(5) },

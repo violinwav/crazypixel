@@ -39,7 +39,7 @@ using a deck of playing cards to move — plus these house rules:
 | **A / K** | Bring a marble out of your base, or move 1 / 11 (Ace) or 13 (King) spaces. |
 | **2** | Move 2 spaces, **or** force an opponent to draw a card blind from your hand. |
 | **4** | Move 4 spaces forward or backward. Landing exactly on your own base square while going backward earns entry into your home stretch on a later move, without needing a full extra lap. |
-| **7** | Split 7 steps across up to 7 of your (or your partner's) marbles, moved one at a time — you can hop a blocked teammate out of the way and then finish another marble in the same play, but marbles already in the home stretch can't be jumped over. |
+| **7** | Split 7 steps across up to 7 of your (or your partner's) marbles, moved one at a time — you can hop a blocked teammate out of the way and then finish another marble in the same play, but marbles already in the home stretch can't be jumped over. A 7 runs *over* whatever it passes, your own marbles included, so **Auto split** proposes the best way into the goal without costing you one — or, when nothing can finish, the furthest safe advance; press it again to cycle the alternatives, and confirm before anything is played. |
 | **8** | Move 8 spaces, **or** replay whatever the previous card did. |
 | **J** | Swap the positions of any two marbles on the track (not one still fresh out of the kennel and guarding its own base). |
 | **Joker** | Play as any other rank, including starting a marble. |
