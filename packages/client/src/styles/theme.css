@@ -754,19 +754,6 @@ body {
   }
 }
 
-.board-overlay__back {
-  /* Top-left, deliberately not the bottom-center anchor .board-overlay__fallback uses - the
-     two sat directly on top of each other whenever both rendered (multiple figures AND an
-     unresolved fallback move). Clear of the fallback list, the card stacks, and every
-     figure/target position. */
-  position: absolute;
-  left: 12px;
-  top: 12px;
-  /* The parent layer sets pointer-events: none, so this needs its own opt back in or it
-     renders but can't be tapped. */
-  pointer-events: auto;
-}
-
 .board-overlay__fallback {
   position: absolute;
   left: 50%;

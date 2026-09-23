@@ -329,15 +329,12 @@ function FigureThenMoves({ state, moves, geo, player, onPlay, onStealCommit, onS
     );
   }
 
-  const goBack = figures.length > 1 ? () => setFigureKey(null) : undefined;
-
   if (selected.key.startsWith(OPPONENT_KEY_PREFIX)) {
     const targetPlayer = Number(selected.key.slice(OPPONENT_KEY_PREFIX.length)) as PlayerId;
     return (
-      // No Back button here, unlike every other figure below: the card was spent when this
-      // target was tapped, so there is nothing to go back to. All that remains is which position
-      // in that hand, and letting the turn clock run out picks one at random rather than
-      // cancelling.
+      // The card was spent when this target was tapped, so there is nothing to go back to. All
+      // that remains is which position in that hand, and letting the turn clock run out picks one
+      // at random rather than cancelling.
       <div className="board-overlay">
         <StealCardOverlay
           state={state}
@@ -386,11 +383,6 @@ function FigureThenMoves({ state, moves, geo, player, onPlay, onStealCommit, onS
             </button>
           ))}
         </div>
-      )}
-      {goBack && (
-        <button type="button" className="cp-button steal-overlay__cancel board-overlay__back" onClick={goBack}>
-          Back
-        </button>
       )}
     </div>
   );
