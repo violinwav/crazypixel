@@ -106,8 +106,6 @@ two modes.
 - **Card-passing sub-phase** (each player passes one card to their partner before a round, in
   Partners mode). The engine implements it (`passCard`, the `cardPass` phase); no UI reaches
   it yet.
-- **Automated tests.** Rules-engine changes are currently verified with throwaway `npx tsx`
-  scripts rather than a checked-in suite.
 
 ## Design
 
@@ -144,6 +142,7 @@ npm run dev:client     # client dev server, http://localhost:5173
 npm run dev:server     # game server, ws://localhost:2567
 npm run build          # builds shared, then client, then server
 npm run typecheck      # shared package only — see below
+npm test               # rules-engine tests (vitest, packages/shared/test/)
 ```
 
 The client finds the server by deriving it from wherever the page was loaded (so a LAN IP or

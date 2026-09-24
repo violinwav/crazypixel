@@ -8,7 +8,8 @@
     "dev:client": "npm run dev --workspace packages/client",
     "dev:server": "npm run dev --workspace packages/server",
     "build": "npm run build --workspace packages/shared && npm run build --workspace packages/client && npm run build --workspace packages/server",
-    "typecheck": "npm run typecheck --workspace packages/shared"
+    "typecheck": "npm run typecheck --workspace packages/shared",
+    "test": "npm run test --workspace packages/shared"
   },
   "devDependencies": {
     "typescript": "^5.5.4"

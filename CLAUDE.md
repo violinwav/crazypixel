@@ -128,15 +128,17 @@ online multiplayer (host/join by room code) both work today - see Architecture b
 - Typecheck each package independently — there's no single root command that checks all
   three:
   ```bash
-  cd packages/shared && npx tsc --noEmit
+  cd packages/shared && npm run typecheck   # src and test/ (tests have their own tsconfig)
   cd packages/client && npx tsc --noEmit
   cd packages/server && npx tsc --noEmit
   ```
-- For rules-engine changes, prefer a quick throwaway script over trusting reasoning alone —
-  `npx tsx` against `packages/shared/src/index.ts` directly (see git history for examples of
-  constructing a `GameState` by hand and calling `getLegalMoves`/`planMovement`). This is how
-  several real bugs in the 7-split and home-stretch logic were actually confirmed and
-  verified fixed in this project, not just reasoned about.
+- For rules-engine changes, run `npm test` (vitest, `packages/shared/test/`) and add a case
+  rather than trusting reasoning alone. Build the board by hand with `test/helpers.ts`
+  (`board`, `onTrack`, `inHome`, `card`) and call `getLegalMoves`/`planMovement`/`applyMove`
+  through `../src`. A throwaway `npx tsx` script is still fine for poking at a position, but
+  once it confirms a bug, it becomes a test - throwaway scripts are how the 7-split,
+  home-stretch and start-guard bugs were found, and deleting them left nothing guarding
+  against a repeat. Tag a regression case with the fixing commit, like the existing ones.
 - For UI changes, run the dev server and check it in an actual browser — this is a game with
   a lot of positioning/animation logic (board geometry, overlay targets, deal/capture
   animations) that's easy to get subtly wrong in a way TypeScript won't catch.
