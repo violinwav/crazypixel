@@ -7,8 +7,9 @@
 // without a matching schema change here. See
 // docs/superpowers/specs/2026-08-22-online-multiplayer-lobbies-design.md.
 //
-// Not implemented: reconnect (a dropped seat freezes and plays on the turn clock),
-// spectators, and any persistence (rooms are in-memory and gone when empty).
+// A dropped client gets a reconnection window (see onLeave); past it the seat freezes and
+// plays on the turn clock. Not implemented: spectators, and any persistence (rooms are
+// in-memory and gone when empty).
 //
 // The @type decorators below need BOTH experimentalDecorators AND
 // useDefineForClassFields: false in tsconfig.json. Missing the second one fails silently:
@@ -36,6 +37,13 @@ const MIN_PLAYERS = 2;
 // greys its own picker for the same window, so a rejection would only ever reach a client
 // that is deliberately ignoring it.
 const EMOTE_COOLDOWN_MS = 1200;
+// How long a dropped client may come back and resume its seat. Short in the lobby, where a
+// ghost seat blocks nothing but Start and a real leaver should free the slot for someone
+// else. Long mid-game, where the seat can't be reopened anyway and the usual cause is a phone
+// backgrounding the tab - but still finite, since a pending reconnection keeps the room alive
+// and a table that all walked away would otherwise never be disposed.
+const LOBBY_RECONNECT_SECONDS = 30;
+const GAME_RECONNECT_SECONDS = 10 * 60;
 
 function isValidHue(hue: unknown): hue is number {
   return typeof hue === 'number' && Number.isInteger(hue) && hue >= 0 && hue < 360;
@@ -72,6 +80,8 @@ class RoomState extends Schema {
   @type(['number']) colors = new ArraySchema<number>();
   @type(['string']) seatSessionIds = new ArraySchema<string>();
   @type(['string']) playerNames = new ArraySchema<string>();
+  /** Index-aligned with seatSessionIds: false while that seat's client is dropped. */
+  @type(['boolean']) connected = new ArraySchema<boolean>();
   /** The short code players share to join. room.id is colyseus's own long internal id and is
    * never shown to a player. */
   @type('string') code = '';
@@ -198,22 +208,53 @@ export class GameRoom extends Room<RoomState> {
     // Color comes straight from the player's own profile. A stale or buggy client omitting
     // or mangling it falls back to 0 rather than crashing the room.
     this.state.colors.push(isValidHue(options.hue) ? options.hue : 0);
+    this.state.connected.push(true);
     this.publishListing();
   }
 
-  onLeave(client: Client) {
-    // A mid-game disconnect intentionally freezes the seat rather than reopening it. Only a
-    // seat that never made it into a started game is removed, so a later joiner can take it.
-    if (this.state.phase !== 'waiting') return;
+  /**
+   * An unintended drop (a backgrounded phone tab, a flaky network, a page reload) holds the
+   * seat open for the client to reconnect into with its reconnectionToken - colyseus keeps the
+   * sessionId across a reconnect, so seatFor keeps resolving it to the same seat with no
+   * bookkeeping here. Deliberately not awaited: colyseus awaits onLeave itself, and holding it
+   * open for minutes would stall its leave accounting for the whole window.
+   *
+   * If the window lapses (or the leave was consented), a seat that never made it into a
+   * started game is removed so a later joiner can take it; a mid-game seat instead stays
+   * frozen and plays on the turn clock. That phase is read when the window closes, not when
+   * the client dropped: a host can press Start while someone is still reconnecting.
+   */
+  onLeave(client: Client, consented: boolean) {
     const index = this.state.seatSessionIds.indexOf(client.sessionId);
-    if (index !== -1) {
-      this.state.seatSessionIds.splice(index, 1);
-      this.state.playerNames.splice(index, 1);
-      // colors grows one push per onJoin, so it has to stay index-aligned with the two arrays
-      // above on the way out too, or the next joiner gets someone else's color.
-      this.state.colors.splice(index, 1);
-      this.publishListing();
+    if (index === -1) return;
+    this.state.connected[index] = false;
+    if (consented) {
+      this.releaseSeat(client.sessionId);
+      return;
     }
+    const seconds = this.state.phase === 'waiting' ? LOBBY_RECONNECT_SECONDS : GAME_RECONNECT_SECONDS;
+    this.allowReconnection(client, seconds)
+      .then(() => {
+        // Re-resolved rather than reusing `index`: a lobby seat ahead of this one may have been
+        // released while this client was away, shifting it down.
+        const seat = this.state.seatSessionIds.indexOf(client.sessionId);
+        if (seat !== -1) this.state.connected[seat] = true;
+      })
+      .catch(() => this.releaseSeat(client.sessionId));
+  }
+
+  /** Frees a departed client's lobby seat. A no-op once the game has started - see onLeave. */
+  private releaseSeat(sessionId: string) {
+    if (this.state.phase !== 'waiting') return;
+    const index = this.state.seatSessionIds.indexOf(sessionId);
+    if (index === -1) return;
+    this.state.seatSessionIds.splice(index, 1);
+    this.state.playerNames.splice(index, 1);
+    // colors and connected grow one push per onJoin, so they have to stay index-aligned with
+    // the two arrays above on the way out too, or the next joiner gets someone else's color.
+    this.state.colors.splice(index, 1);
+    this.state.connected.splice(index, 1);
+    this.publishListing();
   }
 
   onDispose() {
@@ -229,7 +270,7 @@ export class GameRoom extends Room<RoomState> {
    * Nothing secret goes in here - a code, a host name, a headcount and a phase are exactly
    * what the browser row shows. Hands, colors and the board stay behind a real join.
    *
-   * `seats`, not listing.clients: a seat that dropped mid-game stays seated (see onLeave), so
+   * `seats`, not listing.clients: a seat that dropped stays seated (see onLeave), so
    * the client count would under-report a running game's table by however many tabs closed.
    */
   private publishListing() {
@@ -246,6 +287,16 @@ export class GameRoom extends Room<RoomState> {
 
   private seatFor(client: Client): PlayerId | null {
     const index = this.state.seatSessionIds.indexOf(client.sessionId);
+    return index === -1 ? null : (index as PlayerId);
+  }
+
+  /**
+   * Who may deal a rematch: the lowest seat whose client is connected - seat 0, the host,
+   * unless it has dropped. Without the fallback a host who closed their tab left every other
+   * seat staring at a win screen with no way forward.
+   */
+  private rematchSeat(): PlayerId | null {
+    const index = this.state.connected.indexOf(true);
     return index === -1 ? null : (index as PlayerId);
   }
 
@@ -462,9 +513,8 @@ export class GameRoom extends Room<RoomState> {
   }
 
   /**
-   * Deals a brand-new game to the same seats after one finishes. Host-only, matching
-   * handleStartGame - one player decides for the table rather than a first-click-wins race
-   * between six win screens.
+   * Deals a brand-new game to the same seats after one finishes. One seat decides for the
+   * table (see rematchSeat) rather than a first-click-wins race between six win screens.
    *
    * Reuses the finished game's own config rather than rebuilding one from the seat count.
    * The two agree today (seats can't change once a game is playing), and reading it off the
@@ -474,7 +524,8 @@ export class GameRoom extends Room<RoomState> {
    *
    * Seats, colors and names carry over untouched: the room's identity is "these people at
    * these seats", and a rematch is another game between them, not a new lobby. That includes
-   * a seat whose client dropped mid-game - it plays the rematch on the turn clock as before.
+   * a seat whose client dropped mid-game - it plays the rematch on the turn clock, and can
+   * still reconnect into it.
    */
   private handleRematch(client: Client) {
     if (this.state.phase !== 'playing') return;
@@ -482,7 +533,8 @@ export class GameRoom extends Room<RoomState> {
     // whole life once started, so without this any seat-0 client could reroll a game that is
     // still in progress out from under everyone.
     if (this.gameState?.phase !== 'gameEnd') return;
-    if (this.seatFor(client) !== 0) return;
+    const seat = this.seatFor(client);
+    if (seat === null || seat !== this.rematchSeat()) return;
 
     const state = createInitialState(this.gameState.config);
     startGame(state);

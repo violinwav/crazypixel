@@ -5,12 +5,15 @@ import { setSeatColor, startGame } from './game/network';
 import type { RoomState, OnlineSession } from './game/network';
 import { PlayerMarble } from './PlayerMarble';
 import type { PlayerIdentity as Identity } from './game/playerIdentity';
+import { useRoomConnection } from './game/useRoomConnection';
+import { ConnectionBanner } from './ConnectionBanner';
 
 interface Props {
   room: Room<RoomState>;
-  isHost: boolean;
   identity: Identity;
   onReady: (session: OnlineSession) => void;
+  /** Back to the menu, once a dropped connection can't be recovered. */
+  onExit: () => void;
 }
 
 // Mirrors GameRoom's MIN_PLAYERS/MAX_PLAYERS, purely so the right message shows before the
@@ -34,7 +37,10 @@ function startReason(mode: RoomState['mode'], filledSeats: number): string {
  * every joiner (who watches it fill). Its own file rather than a step in a machine, since
  * Lobby.tsx reaches this screen from two places - host-create success and a direct join.
  */
-export function WaitingRoom({ room, isHost, identity, onReady }: Props) {
+export function WaitingRoom({ room: initialRoom, identity, onReady, onExit }: Props) {
+  // Everything below reads the live room, never the prop: a reconnect swaps in a new Room
+  // object, and onReady must hand App the one that is actually connected.
+  const { room, status } = useRoomConnection(initialRoom);
   const [, forceRender] = useState(0);
   const [copyStatus, setCopyStatus] = useState('');
   const [copyError, setCopyError] = useState('');
@@ -61,6 +67,18 @@ export function WaitingRoom({ room, isHost, identity, onReady }: Props) {
   }, []);
 
   const mySeatIndex = Array.from(room.state.seatSessionIds).indexOf(room.sessionId);
+  // Derived live, not fixed at mount: the server's host is simply whoever sits in seat 0
+  // (handleStartGame), and that moves when an earlier seat leaves the lobby - a joiner can be
+  // promoted mid-wait and needs the code and Start button the moment they are.
+  const isHost = mySeatIndex === 0;
+  // Whether this client opened the room, as opposed to inheriting it - only for wording the
+  // announcement. Latched on the first render that knows our seat, not the first render: the
+  // create/join promise settles one message before the first state patch, so the seat list
+  // can still be empty on mount. Seat 0 then means created here (or resumed as its host after
+  // a reload, where "created" is still the truthful framing).
+  const createdHereRef = useRef<boolean | null>(null);
+  if (createdHereRef.current === null && mySeatIndex !== -1) createdHereRef.current = isHost;
+  const createdHere = createdHereRef.current ?? false;
 
   useEffect(() => {
     if (readyFiredRef.current) return;
@@ -94,7 +112,7 @@ export function WaitingRoom({ room, isHost, identity, onReady }: Props) {
   // This only re-announces on a real room.onStateChange, never on an unrelated local render, so
   // folding the Start-eligibility reason in doesn't turn it into per-tick spam.
   const announcement = isHost
-    ? `Room created. Code ${room.state.code}. ${reason}`
+    ? `${createdHere ? 'Room created' : 'You are now the host'}. Code ${room.state.code}. ${reason}`
     : `${filledSeats} players connected.`;
 
   const handleCopyCode = () => {
@@ -170,6 +188,7 @@ export function WaitingRoom({ room, isHost, identity, onReady }: Props) {
         </p>
       )}
       <p aria-live="polite" className="visually-hidden">{announcement}</p>
+      <ConnectionBanner status={status} onExit={onExit} />
     </section>
   );
 }

@@ -54,9 +54,19 @@ export function useOnlineGameState(room: Room<RoomState>) {
   const [stealIntent, setStealIntent] = useState<StealIntentMessage | null>(null);
   // Newest last. Same ephemeral, broadcast-only shape as stealIntent above.
   const [emotes, setEmotes] = useState<FeedEmote[]>([]);
+  // Which seats currently have a live client (GameRoom.onLeave). Lives outside stateJson, so
+  // a seat dropping or coming back changes this without any GameState change behind it.
+  const [connected, setConnected] = useState<boolean[]>(() => Array.from(room.state.connected ?? []));
 
   useEffect(() => {
-    const applyStateJson = () => {
+    // `resync` marks a jump rather than a step: the first state from a room this hook hasn't
+    // seen yet, i.e. a reconnect. Any number of moves may have landed while this client was
+    // away, so the diff against its last snapshot is not one move - planning lastMoveJson
+    // against it would walk a marble from a stale square, and the capture diff would flash
+    // every capture missed in the meantime.
+    const applyStateJson = (resync = false) => {
+      const nextConnected = Array.from(room.state.connected ?? []);
+      setConnected((prev) => (prev.join() === nextConnected.join() ? prev : nextConnected));
       if (!room.state.stateJson) return;
       setTurnDeadline(room.state.turnDeadline);
       if (room.state.stateJson === prevJsonRef.current) return;
@@ -65,13 +75,13 @@ export function useOnlineGameState(room: Room<RoomState>) {
       // anything else is the only transition that can do it (the engine never leaves gameEnd
       // on its own). Diffing across that boundary would read every marble that was out in
       // the finished game as "just sent to kennel" and flash a capture for all of them.
-      const isRematch = prevStateRef.current.phase === 'gameEnd' && next.phase !== 'gameEnd';
+      const isJump = resync || (prevStateRef.current.phase === 'gameEnd' && next.phase !== 'gameEnd');
       // Planned against the PREVIOUS snapshot: that's the state the server ran the move
       // against, and the one the walk animation starts from. An empty string means no move
-      // was behind this state (a pass, a fresh deal); a rematch is skipped for the same
-      // reason its captures are.
+      // was behind this state (a pass, a fresh deal); a rematch or resync is skipped for the
+      // same reason its captures are.
       const moveJson = room.state.lastMoveJson;
-      const move = moveJson && !isRematch ? JSON.parse(moveJson) as Move : null;
+      const move = moveJson && !isJump ? JSON.parse(moveJson) as Move : null;
       // Every seat's move, not just this client's. The board shows an opponent's marbles moving
       // either way; without this only your own moves made a sound, which reads as the game
       // going quiet whenever it isn't your turn.
@@ -84,7 +94,7 @@ export function useOnlineGameState(room: Room<RoomState>) {
       lastPlanRef.current = {
         marbles: plan.marbles,
         draws: plan.draws,
-        capturedMarbleIds: isRematch ? [] : planCaptures(prevStateRef.current, next),
+        capturedMarbleIds: isJump ? [] : planCaptures(prevStateRef.current, next),
       };
       prevStateRef.current = next;
       prevJsonRef.current = room.state.stateJson;
@@ -97,7 +107,12 @@ export function useOnlineGameState(room: Room<RoomState>) {
       setStealIntent(null);
       setState(next);
     };
-    room.onStateChange(applyStateJson);
+    // Catches up at once rather than on the next patch: after a reconnect the room arrives
+    // already holding the full current state (reconnectRoom waits for it), and a quiet table
+    // might not send another patch for a whole turn. On first mount this is a no-op - the
+    // dedupe above sees the snapshot useState already read.
+    applyStateJson(true);
+    room.onStateChange(() => applyStateJson());
     room.onMessage('stealIntent', (message: StealIntentMessage) => setStealIntent(message));
     room.onMessage('emote', (message: EmoteMessage) => {
       // Deduped on the server's id for the same reason applyStateJson dedupes on raw JSON:
@@ -143,6 +158,6 @@ export function useOnlineGameState(room: Room<RoomState>) {
 
   return {
     state, play, passCurrentHand, rematch, lastPlanRef, turnDeadline, stealIntent, announceStealIntent,
-    emotes, emote,
+    emotes, emote, connected,
   };
 }

@@ -28,6 +28,11 @@ interface Props {
   onIdentityChange: (identity: Identity) => void;
   onStart: (setup: PlayerSetup) => void;
   onOnlineReady: (session: OnlineSession) => void;
+  /**
+   * A room this tab was already seated in before a reload, still in its lobby phase (see
+   * App's resume). Opens straight onto its waiting room instead of the menu.
+   */
+  resumeRoom?: Room<RoomState> | null;
 }
 
 type Screen =
@@ -37,10 +42,12 @@ type Screen =
   | { kind: 'singleplayer' }
   | { kind: 'rules' }
   | { kind: 'connecting' }
-  | { kind: 'waiting'; room: Room<RoomState>; isHost: boolean };
+  | { kind: 'waiting'; room: Room<RoomState> };
 
-export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Props) {
-  const [screen, setScreen] = useState<Screen>({ kind: 'menu' });
+export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady, resumeRoom }: Props) {
+  const [screen, setScreen] = useState<Screen>(() => (resumeRoom
+    ? { kind: 'waiting', room: resumeRoom }
+    : { kind: 'menu' }));
   const [joinCode, setJoinCode] = useState('');
   const [joinError, setJoinError] = useState<string | null>(null);
   const [hostMode, setHostMode] = useState<GameMode>('ffa');
@@ -85,7 +92,7 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
     setJoinError(null);
     setScreen({ kind: 'connecting' });
     joinRoom(code, name, identity.hue)
-      .then((room) => setScreen({ kind: 'waiting', room, isHost: false }))
+      .then((room) => setScreen({ kind: 'waiting', room }))
       .catch(() => {
         setScreen(from);
         setJoinError('Room not found or full.');
@@ -101,7 +108,7 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
     setHostError(null);
     setScreen({ kind: 'connecting' });
     createRoom({ mode: hostMode, hue: identity.hue, displayName: name })
-      .then((room) => setScreen({ kind: 'waiting', room, isHost: true }))
+      .then((room) => setScreen({ kind: 'waiting', room }))
       .catch(() => {
         setScreen({ kind: 'hostSettings' });
         setHostError('Could not create room. Check your connection and try again.');
@@ -243,7 +250,14 @@ export function Lobby({ identity, onIdentityChange, onStart, onOnlineReady }: Pr
       <p className="lobby__hint" role="status" ref={connectingRef} tabIndex={-1}>Connecting…</p>
     );
   } else {
-    body = <WaitingRoom room={screen.room} isHost={screen.isHost} identity={identity} onReady={onOnlineReady} />;
+    body = (
+      <WaitingRoom
+        room={screen.room}
+        identity={identity}
+        onReady={onOnlineReady}
+        onExit={() => setScreen({ kind: 'menu' })}
+      />
+    );
   }
 
   return (

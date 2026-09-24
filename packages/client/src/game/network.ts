@@ -45,6 +45,8 @@ export interface RoomState {
   colors: number[];
   seatSessionIds: string[];
   playerNames: string[];
+  /** Index-aligned with seatSessionIds: false while that seat's client is dropped. */
+  connected: boolean[];
   /** The short code shown in the UI to share - not room.id, colyseus's long internal id. */
   code: string;
   stateJson: string;
@@ -104,18 +106,89 @@ interface HostOptions {
  * GameRoom's MAX_PLAYERS/handleStartGame). `hue` comes from the player's own profile, the
  * one place a color is ever chosen.
  */
-export function createRoom({ mode, hue, displayName }: HostOptions): Promise<Room<RoomState>> {
+export async function createRoom({ mode, hue, displayName }: HostOptions): Promise<Room<RoomState>> {
   const client = new Client(SERVER_URL);
-  return client.create<RoomState>('game', { mode, hue, displayName });
+  const room = await client.create<RoomState>('game', { mode, hue, displayName });
+  rememberRoom(room);
+  return room;
 }
 
 /**
  * Joins by short code. client.join, not joinById - the server's filterBy(['code']) (see
  * index.ts) matches on room metadata, so this only ever needs the code the host shared.
  */
-export function joinRoom(code: string, displayName: string, hue: number): Promise<Room<RoomState>> {
+export async function joinRoom(code: string, displayName: string, hue: number): Promise<Room<RoomState>> {
   const client = new Client(SERVER_URL);
-  return client.join<RoomState>('game', { code: code.trim(), displayName, hue });
+  const room = await client.join<RoomState>('game', { code: code.trim(), displayName, hue });
+  rememberRoom(room);
+  return room;
+}
+
+const RECONNECT_KEY = 'crazypixel:reconnect';
+
+/**
+ * Remembers how to get back into `room` if this page is reloaded or the OS discards and
+ * restores the tab - a live page doesn't need it, since it still holds the Room itself. Call
+ * after every successful connect: colyseus issues a fresh token on each (re)join, so a saved
+ * one goes stale the moment it is used.
+ *
+ * sessionStorage, not localStorage: it is per tab, so a second tab opened on the same browser
+ * can't try to take over the first tab's seat (and burn its token when that fails).
+ */
+export function rememberRoom(room: Room<RoomState>): void {
+  try {
+    sessionStorage.setItem(RECONNECT_KEY, room.reconnectionToken);
+  } catch {
+    // No storage - an in-page reconnect still works, only a reload can't resume.
+  }
+}
+
+export function forgetRoom(): void {
+  try {
+    sessionStorage.removeItem(RECONNECT_KEY);
+  } catch {
+    // Nothing stored to forget.
+  }
+}
+
+export function savedReconnectionToken(): string | null {
+  try {
+    return sessionStorage.getItem(RECONNECT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resumes a seat after a drop. Resolves to a brand-new Room object - listeners registered on
+ * the old one are gone - with the same sessionId, which is what the server keys the seat on.
+ * Rejects once the server's reconnection window has lapsed or the room no longer exists; see
+ * isRoomGone to tell that apart from the network still being down.
+ *
+ * Waits for the first state patch before resolving. The reconnect promise settles on the join
+ * handshake, one message before the full state arrives, and every caller immediately reads
+ * room.state (which seat am I, which phase is it) - so resolving early would hand them a
+ * room whose fields are all still blank.
+ */
+export async function reconnectRoom(token: string): Promise<Room<RoomState>> {
+  const client = new Client(SERVER_URL);
+  const room = await client.reconnect<RoomState>(token);
+  await new Promise<void>((resolve) => room.onStateChange.once(() => resolve()));
+  rememberRoom(room);
+  return room;
+}
+
+/**
+ * True when a failed reconnect was the server refusing it (window lapsed, room disposed), as
+ * opposed to never reaching the server at all. Only the former is worth giving up on - a phone
+ * that is still offline should keep retrying until it isn't.
+ */
+export function isRoomGone(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code !== 'number') return false;
+  // colyseus's own matchmaking refusals (MATCHMAKE_INVALID_ROOM_ID, MATCHMAKE_EXPIRED, ...), or
+  // a plain HTTP 4xx. A 5xx or a socket-level error code is the server or network hiccuping.
+  return (code >= 4200 && code < 4300) || (code >= 400 && code < 500);
 }
 
 /**
@@ -163,8 +236,8 @@ export function sendStealIntent(room: Room<RoomState>, targetPlayer: PlayerId, c
 }
 
 /**
- * Host-only server-side (see GameRoom.handleRematch) - sent from any other seat it is
- * silently ignored. The new game arrives through the ordinary state path.
+ * Only the lowest connected seat may deal one (see GameRoom.rematchSeat) - from any other
+ * seat it is silently ignored. The new game arrives through the ordinary state path.
  */
 export function requestRematch(room: Room<RoomState>): void {
   room.send('rematch');

@@ -2862,3 +2862,39 @@ canvas {
   align-self: flex-end;
   margin-bottom: calc(var(--space-xs) * -1);
 }
+
+/* --- Connection banner (ConnectionBanner.tsx) --------------------------------------------- */
+
+.connection-scrim {
+  position: fixed;
+  inset: 0;
+  /* Above every game overlay and the win screen - while dropped, none of them can act. */
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-md);
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.connection-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  max-width: 360px;
+  padding: var(--space-md);
+  text-align: center;
+}
+
+.connection-banner__text {
+  margin: 0;
+  font-family: var(--cp-font-display);
+  color: var(--ink);
+}
+
+.app-resuming {
+  margin: 0;
+  padding: var(--space-lg) var(--space-md);
+  text-align: center;
+}
