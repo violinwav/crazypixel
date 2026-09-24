@@ -25,6 +25,8 @@ Three ways to play, all from the same menu:
 - **Host** — start an online room and share the four-digit code. The room adapts to however
   many people actually join; the host presses Start when everyone's seated.
 - **Join** — type a friend's code.
+- **Browse Rooms** — see every live room on the server (code, host, mode, headcount) and join
+  an open one with a tap. Games already in progress are listed but can't be joined.
 
 Your display name and marble color persist across visits, so they're already filled in next
 time.
@@ -84,8 +86,12 @@ two modes.
   of 4 or more), with every house rule above implemented — dealing, round-size cycling,
   capturing, blockades, home-stretch entry, and win detection.
 - **Online multiplayer** — host/join by room code, hidden hands, a 20-second turn clock that
-  auto-plays a stalled seat, emotes, and a host-initiated rematch that re-deals to the same
-  table.
+  auto-plays a stalled seat, emotes, a server browser of live rooms, and a rematch that
+  re-deals to the same table.
+- **Reconnect** — a dropped player (backgrounded phone tab, flaky network, page reload) gets
+  their seat back automatically: the seat is held for 30 seconds in the lobby and 10 minutes
+  mid-game. Past that window the seat freezes and the turn clock plays it. Rematch belongs to
+  the lowest still-connected seat, so a host dropping doesn't strand the table.
 - **Bots** — three difficulty levels, scoring only moves the engine already declared legal.
 - **Sound** — every effect synthesized at play time from oscillators and noise, no audio files.
   A distinct cue per event, including separate ones for a capture, a J-swap, an 8 copying the
@@ -95,9 +101,6 @@ two modes.
 
 **Not implemented:**
 
-- **Reconnect after a disconnect.** A dropped seat freezes; the turn clock keeps the game
-  moving, but that player can't rejoin. If the host (seat 0) is the one who dropped, no one
-  can start a rematch.
 - **Spectators** and any **persistence** — rooms are in-memory and vanish when empty or when
   the process restarts.
 - **Card-passing sub-phase** (each player passes one card to their partner before a round, in
