@@ -18,7 +18,7 @@ import { computeBoardGeometry, discardPileCenter, drawPileCenter, handCountPoint
 import { HandPanel } from './HandPanel';
 import { BoardOverlay } from './BoardOverlay';
 import { BoardGuards } from './BoardGuards';
-import { OpponentHandCounts } from './OpponentHandCounts';
+import { HandCounts } from './HandCounts';
 import { LaidCard } from './LaidCard';
 import { TurnLabel } from './TurnLabel';
 import { TurnTimerBar } from './TurnTimerBar';
@@ -330,10 +330,11 @@ export function GameBoard({
   const pendingLaidCard = stealCommit?.card ?? stealIntent?.card ?? null;
   const laidCard = pendingLaidCard ?? state.lastPlayedCard;
   // The same card seen from the other side: one that is on the pile but still listed in
-  // someone's hand has to stop being counted in their stack. Only stealIntent feeds this -
-  // OpponentHandCounts never renders the viewer's own seat, and stealCommit is always about this
-  // client's own hand.
-  const spentCard = stealIntent ? { seat: stealIntent.by, cardId: stealIntent.card.id } : null;
+  // someone's hand has to stop being counted in their stack - the viewer's own stack too, via
+  // stealCommit, since that is always about this client's own hand.
+  const spentCard = stealCommit
+    ? { seat: mySeat, cardId: stealCommit.card.id }
+    : stealIntent ? { seat: stealIntent.by, cardId: stealIntent.card.id } : null;
   // Held open only until the real card lands in the hand - at that point the hand provides the
   // slot, and a second one would leave a gap hanging off the end. Checking the hand rather than
   // clearing on a timer means this is right whether the move commits instantly (hotseat) or a
@@ -669,16 +670,15 @@ export function GameBoard({
             playerNames={playerNames}
           />
         )}
-        <OpponentHandCounts
+        <HandCounts
           state={state}
           containerSize={containerSize}
-          mySeat={mySeat}
           viewerSeat={viewerSeat}
           playerNames={playerNames}
           poppingSeat={fanPop}
           spentCard={spentCard}
         />
-        {/* Board state, always present, never a control - same standing as OpponentHandCounts
+        {/* Board state, always present, never a control - same standing as HandCounts
             above it. Screen-reader only: the visible form of this is TableScene's reticle. */}
         <BoardGuards state={state} mySeat={mySeat} playerNames={playerNames} />
         {laidCard && (

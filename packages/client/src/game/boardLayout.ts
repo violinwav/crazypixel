@@ -19,7 +19,7 @@ export interface BoardGeometry {
   center: Point;
   trackRadius: number;
   kennelRadius: number;
-  /** Where OpponentHandCounts badges anchor - further out than the kennel cluster. */
+  /** Where HandCounts badges anchor - further out than the kennel cluster. */
   handCountRadius: number;
   homeRadiusOuter: number;
   homeRadiusStep: number;
@@ -64,7 +64,7 @@ const KENNEL_RATIO = 260 / REFERENCE_TRACK_RADIUS;
 // (45px here) - any further inward and they start to touch.
 const HOME_OUTER_RATIO = 180 / REFERENCE_TRACK_RADIUS;
 const HOME_STEP_RATIO = 45 / REFERENCE_TRACK_RADIUS;
-// Opponent hand-count badges (OpponentHandCounts.tsx) sit here, not at kennelRadius, so they
+// Hand-count badges (HandCounts.tsx) sit here, not at kennelRadius, so they
 // clear the kennel cluster instead of landing on top of it.
 const HAND_COUNT_RATIO = 310 / REFERENCE_TRACK_RADIUS;
 // Half the gap between the draw and discard piles. At the card's 80px width anything much

@@ -25,7 +25,7 @@ import {
   pieceScaleFor, trackAngle, trackPoint,
 } from '../boardLayout';
 import type { BoardGeometry, Point } from '../boardLayout';
-import { hueToCss, hueToHex } from '../color';
+import { hueToHex } from '../color';
 import { PALETTE } from '../theme';
 import { CARD_WIDTH, CARD_HEIGHT, handCardWidthFor } from '../cardArt';
 import { EMPTY_TURN_ANIMATION } from '../animationPlan';
@@ -34,16 +34,36 @@ import type { CardDrawAnimation, MarbleAnimation, TurnAnimation } from '../anima
 
 // --- Pieces and fields ----------------------------------------------------
 
-const MARBLE_SIZE = 24;
-// Kennel fields are chamfered squares with the same cut-corner silhouette as
-// generate-sprites.py's make_marble (7/22), not circles, so a field reads as the same shape
-// family as the piece that sits in it, and a little larger than a marble (a socket the piece
-// drops into). Goal fields are diamonds of four chevron tips in the owner's color
-// (drawGoalDiamond).
-const HOME_FIELD_DIAMETER = MARBLE_SIZE + 8;
-const FIELD_CHAMFER_RATIO = 7 / 22;
-// Matches generate-sprites.py's PALETTE['marble_border'] - the outline every marble already
-// carries, reused so a field's border reads as the same ink.
+// Every piece and field on the board is the same diamond - a square stood on its corner - so a
+// marble reads as the same shape family as the fields it sits in. All of them are vector paths
+// drawn at device resolution (see PhaserGame.ts's fitToParent), never a pixel sprite scaled up,
+// because a diagonal edge is exactly what a nearest-neighbour upscale turns into stairs.
+//
+// Reference px, center to tip. Roughly the area of the 24px chamfered-square sprite this
+// replaced, and small enough to nest inside a goal diamond (GOAL_TIP_REACH) with a visible gap.
+const MARBLE_REACH = 15;
+// The rim is what separates a marble from the light quarter tiles, where no pastel facet
+// clears 3:1 on its own - and a thinner diagonal line antialiases away to well under that.
+const MARBLE_RIM = 2;
+const MARBLE_MIN_RIM = 1.5;
+// The flat top of the cut, as a fraction of the reach inside the rim. The four bevels run from
+// its edges out to the rim.
+const MARBLE_TABLE_RATIO = 0.42;
+// Bevel shading per facet, clockwise from the top-right one (the facet between the N and E
+// tips), lit from the top left: positive mixes toward white, negative toward black. The bevel
+// comes mostly from the lit side: the darkest facet of the darkest pastel (hue 240) has to keep
+// 3:1 against the black board and the dark track tile, which caps the shadow side near -0.2 -
+// at -0.38 it measured 2.6:1.
+const MARBLE_FACET_SHADES = [0.2, -0.2, -0.08, 0.5];
+// A small sparkle on the lit facet - what makes it read as a cut stone rather than a pyramid.
+const MARBLE_GLINT_RATIO = 0.13;
+const MARBLE_GLINT_ALPHA = 0.9;
+// Kennel fields: a socket a little larger than a marble, which the piece visibly drops into.
+// Same reach as a goal diamond, so the two kinds of field read as one size.
+const KENNEL_FIELD_REACH = 19;
+const KENNEL_FIELD_BORDER = 2;
+// Matches generate-sprites.py's PALETTE['marble_border'] - the outline every marble carries,
+// reused so a field's border reads as the same ink.
 const MARBLE_BORDER_COLOR = 0x0a080a;
 // Track tiles render at a fixed sprite size but their *count* scales with player count, so at
 // native size they touch or overlap. TRACK_TILE_GAP shrinks every tile for a universal small
@@ -61,8 +81,10 @@ const REFERENCE_TRACK_LENGTH = 48;
 // marks a *rule*, not an event, it sits still for as long as the rule holds, and it has to
 // stay legible with four marbles clustered on adjacent squares.
 //
-// Reference px, scaled by pieceScale like every other piece dimension here.
-const GUARD_GAP = 4;
+// Reference px, scaled by pieceScale like every other piece dimension here. The half-extent
+// clears the marble's tips (MARBLE_REACH) along the axes; the brackets sit at the corners, well
+// off the diamond's sloped edges.
+const GUARD_HALF_EXTENT = 16;
 const GUARD_ARM = 8;
 const GUARD_WEIGHT = 3;
 /**
@@ -76,7 +98,7 @@ const GUARD_WEIGHT = 3;
  * of the two tones at 4.5:1 or better against anything the board can put behind it.
  *
  * (It does NOT cross the white start tile - that tile's half-extent is ~5.6 reference px,
- * well inside where the brackets begin. Don't "fix" GUARD_GAP on that theory.)
+ * well inside where the brackets begin. Don't "fix" GUARD_HALF_EXTENT on that theory.)
  */
 const GUARD_OUTLINE = 1;
 // CSS-px floors. pieceScale bottoms out near 0.48 on a 360px-wide phone, which turns an
@@ -85,9 +107,10 @@ const GUARD_MIN_ARM = 5;
 const GUARD_MIN_WEIGHT = 2;
 
 // --- Goal-slot diamond ----------------------------------------------------
-// Reference px. Reach is center-to-tip, sized so the diamond outlines a whole marble: the
-// marble's chamfered corners sit at |x|+|y| = 16.4, so 19 clears them with room for the
-// stroke. boardLayout.ts's 45px slot step leaves 7px between neighbouring tips. Arm is each
+// Reference px. Reach is center-to-tip, sized so the diamond outlines a whole marble: 19 clears
+// the marble's own tips (MARBLE_REACH) with room for the stroke, so a marble in its goal slot
+// sits as a diamond nested in a diamond. boardLayout.ts's 45px slot step leaves 7px between
+// neighbouring tips. Arm is each
 // chevron leg's length along the ~27px edge, under a third of it, so the four tips read as
 // separate marks around an open center.
 const GOAL_TIP_REACH = 19;
@@ -119,7 +142,11 @@ const TRAIL_FADE_MS = 900;
 // has to say "something passed through here", never "someone is here".
 const TRAIL_ALPHA = 0.6;
 // Smaller than a marble, so a marker reads as a footprint and the tile still shows around it.
+// Fraction of the marble's tip-to-tip width.
 const TRAIL_SIZE_RATIO = 0.72;
+// A chamfered square, deliberately NOT the marble's diamond: a faint diamond in the marble's
+// own color is one outline away from the "second marble" misread TRAIL_ALPHA guards against.
+const TRAIL_CHAMFER_RATIO = 7 / 22;
 // The border line sits in the empty band between the track ring (1.0) and the kennels
 // (KENNEL_RATIO, ~1.18), so it crowds neither.
 const TRAIL_ARC_RATIO = 1.09;
@@ -245,10 +272,7 @@ function drawGoalDiamond(
   color: number,
   { alpha = 1, closed = false } = {},
 ) {
-  const x0 = Math.round(cx);
-  const y0 = Math.round(cy);
-  const reach = GOAL_TIP_REACH * scale;
-  const tips = [[0, -1], [1, 0], [0, 1], [-1, 0]].map(([dx, dy]) => ({ x: x0 + dx * reach, y: y0 + dy * reach }));
+  const tips = diamondTips(Math.round(cx), Math.round(cy), GOAL_TIP_REACH * scale);
   g.lineStyle(Math.max(GOAL_MIN_WEIGHT, GOAL_WEIGHT * scale), color, alpha);
   if (closed) {
     g.beginPath();
@@ -290,6 +314,60 @@ function chamferedSquarePoints(size: number, cutRatio: number): { x: number; y: 
     { x: 0, y: size - cut },
     { x: 0, y: cut },
   ];
+}
+
+/** A diamond's four tips around (cx, cy), clockwise from the top: N, E, S, W. */
+function diamondTips(cx: number, cy: number, reach: number): Point[] {
+  return [
+    { x: cx, y: cy - reach },
+    { x: cx + reach, y: cy },
+    { x: cx, y: cy + reach },
+    { x: cx - reach, y: cy },
+  ];
+}
+
+/** `color` mixed toward white (amount > 0) or black (amount < 0), as a CSS color. */
+function shadeCss(color: number, amount: number): string {
+  const target = amount > 0 ? 255 : 0;
+  const t = Math.abs(amount);
+  const channel = (shift: number) => Math.round(((color >> shift) & 0xff) * (1 - t) + target * t);
+  return `rgb(${channel(16)}, ${channel(8)}, ${channel(0)})`;
+}
+
+/**
+ * Paints a cut-stone marble centered on (c, c) of a raw 2D context, in the context's own
+ * units: a dark rim, four bevels shaded by MARBLE_FACET_SHADES, a flat table and a glint.
+ *
+ * The body is filled in the base color before the bevels go on top. Each bevel's edge is
+ * antialiased on its own, so two bevels meeting leave a faint seam of whatever sits beneath
+ * them - over the base coat that seam is the marble's own color, where over the rim it would be
+ * a dark hairline down every join.
+ */
+function paintMarble(ctx: CanvasRenderingContext2D, c: number, reach: number, rim: number, color: number) {
+  const fill = (points: Point[], style: string) => {
+    ctx.fillStyle = style;
+    ctx.beginPath();
+    points.forEach(({ x, y }, i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+    ctx.closePath();
+    ctx.fill();
+  };
+  // A rim of perpendicular width `rim` takes rim * sqrt(2) off a diamond's reach.
+  const bodyReach = reach - rim * Math.SQRT2;
+  const body = diamondTips(c, c, bodyReach);
+  const table = diamondTips(c, c, bodyReach * MARBLE_TABLE_RATIO);
+
+  fill(diamondTips(c, c, reach), shadeCss(MARBLE_BORDER_COLOR, 0));
+  fill(body, shadeCss(color, 0));
+  MARBLE_FACET_SHADES.forEach((shade, i) => {
+    const j = (i + 1) % 4;
+    fill([body[i], body[j], table[j], table[i]], shadeCss(color, shade));
+  });
+  fill(table, shadeCss(color, 0));
+  // Centered on the lit (NW) bevel, halfway between the table's edge and the rim.
+  const glintOffset = (bodyReach * (1 + MARBLE_TABLE_RATIO)) / 4;
+  ctx.globalAlpha = MARBLE_GLINT_ALPHA;
+  fill(diamondTips(c - glintOffset, c - glintOffset, bodyReach * MARBLE_GLINT_RATIO), '#ffffff');
+  ctx.globalAlpha = 1;
 }
 
 function prefersReducedMotion(): boolean {
@@ -359,8 +437,8 @@ export class TableScene extends Phaser.Scene {
   private guardMarks = new Map<string, Phaser.GameObjects.Graphics>();
   /** marble id -> the closed goal diamond under it, for every settled marble (isMarbleSettled). */
   private settledMarks = new Map<string, Phaser.GameObjects.Graphics>();
-  /** hue -> generated texture key, filled lazily by tintedMarbleKey. */
-  private marbleTextureCache = new Map<number, string>();
+  /** Every texture marbleTextureKey has generated and not yet released. */
+  private marbleTextureKeys = new Set<string>();
   private pendingPlan: MarbleAnimation[] = [];
   private pendingCaptures: string[] = [];
   /**
@@ -385,10 +463,12 @@ export class TableScene extends Phaser.Scene {
     // Only the card back: the discard pile's face-up card is a real DOM .playing-card now
     // (see LaidCard.tsx), so no card-face textures are needed here.
     this.load.image('card-back', '/sprites/card-back.png');
-    this.load.image('marble-base', '/sprites/marble-base.png');
   }
 
   create() {
+    // Zoomed from the top-left corner (layout sets the zoom), so scene coordinates stay the
+    // CSS pixels boardLayout and BoardOverlay work in while the canvas itself is device pixels.
+    this.cameras.main.setOrigin(0, 0);
     // Added before boardLayer: Phaser draws containers in add-order, so the glow paints
     // first and the board's tiles paint over it, showing only past a tile's edges. A DOM
     // layer behind the canvas can't do this - the Game config sets a backgroundColor with no
@@ -448,18 +528,37 @@ export class TableScene extends Phaser.Scene {
     return pieceScaleFor(this.geo);
   }
 
+  /** Device pixels per CSS pixel - PhaserGame.ts's fitToParent zooms the canvas by its inverse. */
+  private get pixelRatio(): number {
+    return 1 / this.scale.zoom;
+  }
+
+  /**
+   * The canvas's CSS size, which is what every position here is in. this.scale.width/height
+   * are the device-pixel backing store (see fitToParent) and never the right thing to lay out
+   * against.
+   */
+  private get viewWidth(): number {
+    return this.scale.width * this.scale.zoom;
+  }
+
+  private get viewHeight(): number {
+    return this.scale.height * this.scale.zoom;
+  }
+
   /**
    * The draw/discard pile's card width, synced to the real DOM hand card rather than
    * pieceScale: on a narrow phone the hand shrinks well before the board's trackRadius-
-   * relative scale does, and the pile has to shrink with it. this.scale.width is the same
-   * CSS-pixel container width GameBoard.tsx measures - RESIZE scale mode keeps the canvas
-   * synced 1:1 with that parent element.
+   * relative scale does, and the pile has to shrink with it. viewWidth is the same CSS-pixel
+   * container width GameBoard.tsx measures - fitToParent keeps the canvas synced to that
+   * parent element.
    */
   private get pileCardWidth(): number {
-    return handCardWidthFor(this.scale.width);
+    return handCardWidthFor(this.viewWidth);
   }
 
   private layout() {
+    this.cameras.main.setZoom(this.pixelRatio);
     // Trail markers live in screen space, so a resize (or a hotseat rotation snap) leaves
     // them pointing at squares that have moved out from under them. Drop them rather than
     // re-deriving positions for a decoration that's about to fade out anyway.
@@ -469,7 +568,8 @@ export class TableScene extends Phaser.Scene {
 
   private renderPieces(animate: boolean) {
     if (!this.state || !this.marbleLayer) return;
-    const { width, height } = this.scale;
+    const width = this.viewWidth;
+    const height = this.viewHeight;
     if (width === 0 || height === 0) return; // nothing sensible to draw against yet
     // Geometry depends on state.config, which isn't known until the first real setGameState
     // call and never changes afterward for a given scene instance - so recomputing here
@@ -502,7 +602,6 @@ export class TableScene extends Phaser.Scene {
     const trackLength = trackLengthFor(config);
     const players = activePlayerIds(config);
     this.boardLayer.removeAll(true);
-    const homeFieldSize = HOME_FIELD_DIAMETER * this.pieceScale;
     const trackTileScale = this.pieceScale * TRACK_TILE_GAP * Math.min(1, REFERENCE_TRACK_LENGTH / trackLength);
 
     for (let i = 0; i < trackLength; i++) {
@@ -515,20 +614,21 @@ export class TableScene extends Phaser.Scene {
       this.boardLayer.add(this.add.image(x, y, key).setScale(trackTileScale));
     }
 
-    // Points span 0..size (top-left origin) - add.polygon re-centers them on x/y itself, so
-    // x/y below is the field's center, same as every other shape call here.
-    const homeFieldPoints = chamferedSquarePoints(homeFieldSize, FIELD_CHAMFER_RATIO);
+    const kennelFields = this.add.graphics();
+    kennelFields.fillStyle(PALETTE.bgRaised, 1);
+    kennelFields.lineStyle(KENNEL_FIELD_BORDER, MARBLE_BORDER_COLOR, 1);
+    this.boardLayer.add(kennelFields);
 
     players.forEach((player) => {
-      // Kennel: a black-bordered socket a little larger than a marble, so the piece visibly
-      // sits inside it.
+      // Kennel: a black-bordered diamond socket a little larger than a marble, so the piece
+      // visibly sits inside it.
       for (let slot = 0; slot < KENNEL_SIZE; slot++) {
         const { x, y } = kennelSlotPoint(config, player, slot, this.geo);
-        this.boardLayer!.add(
-          this.add
-            .polygon(x, y, homeFieldPoints, PALETTE.bgRaised, 1)
-            .setStrokeStyle(2, MARBLE_BORDER_COLOR, 1),
-        );
+        const tips = diamondTips(Math.round(x), Math.round(y), KENNEL_FIELD_REACH * this.pieceScale);
+        kennelFields.fillPoints(tips, true);
+        // closePath as well as closeShape: without it the top tip is two butt-capped line ends
+        // meeting, not a mitred corner, and shows a notch.
+        kennelFields.strokePoints(tips, true, true);
       }
       // Goal slots: the base-guard's corner brackets turned 45deg into a diamond, in the
       // owner's color at partial strength. Brackets rather than a filled field so an occupied
@@ -548,42 +648,47 @@ export class TableScene extends Phaser.Scene {
   // --- Marbles ------------------------------------------------------------
 
   /**
-   * Recolors the neutral 'marble-base' texture to a hue and registers the result as its own
-   * texture, cached per hue.
+   * A marble texture for `hue` at the current on-screen size: paintMarble's vector cut stone,
+   * painted straight onto a canvas at device resolution and registered as its own texture.
    *
-   * Exists because Image.setTint is a no-op under this project's Phaser.CANVAS renderer
-   * (confirmed by pixel sampling - marbles rendered plain grey with setTint applied). Don't
-   * swap this for setTint without re-confirming tint actually paints under Canvas. The
-   * 'multiply' then 'destination-in' pair is the standard canvas recolor recipe: multiply
-   * blends the tint across the whole canvas (outside the silhouette too, since the fill is
-   * opaque), then destination-in clips back to wherever the base image had pixels -
-   * preserving the border and facet shading baked into marble-base.png instead of flattening
-   * the marble to one solid tone.
+   * Painted per size rather than once and scaled, because scaling is what stepped the old
+   * pixel sprite's edges. This one is drawn texel-for-pixel - updateMarbles snaps every marble
+   * center onto the device pixel grid to match - so its antialiased edges reach the screen
+   * untouched. LINEAR covers the moments it isn't 1:1 (a pop-in scale tween), where the
+   * pixelArt default of NEAREST would step the edges all over again.
+   *
+   * Color is painted in rather than tinted on: Image.setTint is a no-op under this project's
+   * Phaser.CANVAS renderer (confirmed by pixel sampling - marbles rendered plain grey with
+   * setTint applied).
    */
-  private tintedMarbleKey(hue: number): string {
-    const cached = this.marbleTextureCache.get(hue);
-    if (cached) return cached;
+  private marbleTexture(hue: number): { key: string; displaySize: number } {
+    const ratio = this.pixelRatio;
+    const reach = MARBLE_REACH * this.pieceScale;
+    // Even, so the texture's center falls on a pixel corner, where a snapped marble center
+    // does. The extra pixel per side is room for the rim's antialiasing.
+    const size = 2 * Math.ceil(reach * ratio + 1);
+    const key = `marble-${hue}-${size}`;
+    if (!this.textures.exists(key)) {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d')!;
+      ctx.scale(ratio, ratio);
+      const rim = Math.max(MARBLE_MIN_RIM, MARBLE_RIM * this.pieceScale);
+      paintMarble(ctx, size / 2 / ratio, reach, rim, hueToHex(hue));
+      this.textures.addCanvas(key, canvas)?.setFilter(Phaser.Textures.FilterMode.LINEAR);
+      this.marbleTextureKeys.add(key);
+    }
+    return { key, displaySize: size / ratio };
+  }
 
-    const key = `marble-tint-${hue}`;
-    const base = this.textures.get('marble-base').getSourceImage() as HTMLImageElement;
-    const canvas = document.createElement('canvas');
-    canvas.width = base.width;
-    canvas.height = base.height;
-    const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(base, 0, 0);
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.fillStyle = hueToCss(hue);
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.globalCompositeOperation = 'destination-in';
-    ctx.drawImage(base, 0, 0);
-
-    this.textures.addCanvas(key, canvas);
-    this.marbleTextureCache.set(hue, key);
-    return key;
+  /** Rounds a CSS-pixel coordinate onto the device pixel grid - see marbleTexture. */
+  private snapToPixel(v: number): number {
+    return Math.round(v * this.pixelRatio) / this.pixelRatio;
   }
 
   private updateMarbles(animate: boolean) {
-    const marbleSize = MARBLE_SIZE * this.pieceScale;
+    const usedTextures = new Set<string>();
     const planByMarble = new Map(this.pendingPlan.map((p) => [p.marbleId, p]));
     const capturedIds = new Set(this.pendingCaptures);
     // A captured marble doesn't start its trip to kennel until whatever captured it has
@@ -607,13 +712,17 @@ export class TableScene extends Phaser.Scene {
 
     for (const marble of this.state!.marbles) {
       seen.add(marble.id);
-      const { x, y } = this.marblePoint(marble);
+      const point = this.marblePoint(marble);
+      const x = this.snapToPixel(point.x);
+      const y = this.snapToPixel(point.y);
       const existing = this.marbleSprites.get(marble.id);
       const alpha = passedOwners.has(marble.owner) ? 0.65 : 1;
+      const { key, displaySize } = this.marbleTexture(this.colorAssignment[marble.owner]);
+      usedTextures.add(key);
 
       if (!existing) {
-        const sprite = this.add.image(x, y, this.tintedMarbleKey(this.colorAssignment[marble.owner]))
-          .setDisplaySize(marbleSize, marbleSize)
+        const sprite = this.add.image(x, y, key)
+          .setDisplaySize(displaySize, displaySize)
           .setAlpha(alpha);
         this.marbleLayer!.add(sprite);
         this.marbleSprites.set(marble.id, sprite);
@@ -625,15 +734,16 @@ export class TableScene extends Phaser.Scene {
         continue;
       }
 
-      existing.setDisplaySize(marbleSize, marbleSize);
+      existing.setTexture(key).setDisplaySize(displaySize, displaySize);
       existing.setAlpha(alpha);
-      const moved = Math.round(existing.x) !== Math.round(x) || Math.round(existing.y) !== Math.round(y);
-      if (!moved) continue;
-
+      // Unconditional on a re-layout, not only when the marble moved: a pixel-ratio change can
+      // leave a marble on the same CSS pixel but off the new device grid.
       if (!animate) {
         existing.setPosition(x, y);
         continue;
       }
+      const moved = Math.round(existing.x) !== Math.round(x) || Math.round(existing.y) !== Math.round(y);
+      if (!moved) continue;
 
       const planned = planByMarble.get(marble.id);
       if (planned?.kind === 'walk' && (planned.trackIndices.length > 0 || planned.entersHomeSlot !== null)) {
@@ -665,6 +775,14 @@ export class TableScene extends Phaser.Scene {
         sprite.destroy();
         this.marbleSprites.delete(id);
       }
+    }
+
+    // Every marble was just switched to a texture at the current size, so any other size's
+    // textures (left over from before a resize) are no longer drawn by anything.
+    for (const key of this.marbleTextureKeys) {
+      if (usedTextures.has(key)) continue;
+      this.textures.remove(key);
+      this.marbleTextureKeys.delete(key);
     }
   }
 
@@ -777,7 +895,7 @@ export class TableScene extends Phaser.Scene {
    */
   private drawGuardBrackets(mark: Phaser.GameObjects.Graphics) {
     mark.clear();
-    drawCornerBrackets(mark, 0, 0, MARBLE_SIZE / 2 + GUARD_GAP, this.pieceScale, PALETTE.ink);
+    drawCornerBrackets(mark, 0, 0, GUARD_HALF_EXTENT, this.pieceScale, PALETTE.ink);
   }
 
 
@@ -795,6 +913,12 @@ export class TableScene extends Phaser.Scene {
     const points = planned.trackIndices.map((i) => trackPoint(i, trackLength, this.geo));
     if (planned.entersHomeSlot !== null) {
       points.push(homeSlotPoint(config, owner, planned.entersHomeSlot, this.geo));
+    }
+    // Onto the device grid like every resting marble (updateMarbles), so a walk ends exactly
+    // where the marble's texture lines up with the screen's pixels.
+    for (const point of points) {
+      point.x = this.snapToPixel(point.x);
+      point.y = this.snapToPixel(point.y);
     }
     // The departure square comes from the plan, not from where the sprite happens to be: a
     // marble whose previous move is still animating sits between two squares right now, and
@@ -877,15 +1001,15 @@ export class TableScene extends Phaser.Scene {
   }
 
   /**
-   * One fading square of a marble's walked path, in that marble's own color. Same chamfered
-   * silhouette as the kennel and goal fields, so it reads as part of the board's shape
-   * vocabulary rather than a generic particle. No stroke: an outline at this size fights the
-   * track tile underneath, and the fill alone carries the color.
+   * One fading square of a marble's walked path, in that marble's own color. A chamfered
+   * square rather than the diamond every piece and field uses - see TRAIL_CHAMFER_RATIO. No
+   * stroke: an outline at this size fights the track tile underneath, and the fill alone
+   * carries the color.
    */
   private spawnTrailMark(x: number, y: number, hue: number) {
     if (!this.trailLayer) return;
-    const size = MARBLE_SIZE * this.pieceScale * TRAIL_SIZE_RATIO;
-    const mark = this.add.polygon(x, y, chamferedSquarePoints(size, FIELD_CHAMFER_RATIO), hueToHex(hue), TRAIL_ALPHA);
+    const size = MARBLE_REACH * 2 * this.pieceScale * TRAIL_SIZE_RATIO;
+    const mark = this.add.polygon(x, y, chamferedSquarePoints(size, TRAIL_CHAMFER_RATIO), hueToHex(hue), TRAIL_ALPHA);
     this.trailLayer.add(mark);
     this.fadeOutTrail(mark);
   }
@@ -923,14 +1047,17 @@ export class TableScene extends Phaser.Scene {
    * crowded near the center, right next to goal outlines that are there regardless of
    * occupancy, so without a distinct arrival beat this is easy to miss entirely - especially
    * for the custom-4's backward shortcut, where a marble can reach home from far away from
-   * the visual "lap complete" moment. A fixed-size square that fades out, not a scale tween
-   * on the marble itself.
+   * the visual "lap complete" moment. A fixed-size diamond that fades out, not a scale tween
+   * on the marble itself - just outside the goal diamond the marble lands in, so it reads as
+   * that slot lighting up.
    */
   private playHomeArrival(sprite: Phaser.GameObjects.Image) {
     // Same reasoning as the capture sound: this fires at the end of the walk, which is where
     // the marble actually arrives, rather than when the state snapshot said it had.
     playSound('homeEnter');
-    const flash = this.add.rectangle(sprite.x, sprite.y, sprite.displayWidth * 1.4, sprite.displayHeight * 1.4, 0xffffff, 0.85);
+    const flash = this.add.graphics({ x: sprite.x, y: sprite.y });
+    flash.fillStyle(0xffffff, 0.85);
+    flash.fillPoints(diamondTips(0, 0, MARBLE_REACH * 1.4 * this.pieceScale), true);
     this.tweens.add({
       targets: flash, alpha: 0, duration: 380, ease: 'Cubic.easeOut',
       onComplete: () => flash.destroy(),
@@ -1066,7 +1193,8 @@ export class TableScene extends Phaser.Scene {
    */
   private drawGlowLayer() {
     if (!this.state || !this.glowTexture || !this.glowImage) return;
-    const { width, height } = this.scale;
+    const width = this.viewWidth;
+    const height = this.viewHeight;
     if (width === 0 || height === 0) return;
 
     if (this.glowTexture.width !== width || this.glowTexture.height !== height) {

@@ -18,7 +18,7 @@ function hueToRgb(p: number, q: number, t: number): number {
 
 /**
  * Hue (0-359) to a 24-bit RGB int at this game's fixed pastel saturation/lightness. Backs
- * both the on-screen swatches and the Phaser marble recolor (TableScene.tintedMarbleKey),
+ * both the on-screen swatches and the Phaser marble texture (TableScene.marbleTexture),
  * so one conversion gives one look everywhere.
  */
 export function hueToHex(hue: number): number {

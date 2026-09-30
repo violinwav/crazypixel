@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Procedural pixel-art sprite generator for CrazyPixel.
 
-No AI image generation, on purpose: these are hand-placed pixel grids (suits, marble) and
+No AI image generation, on purpose: these are hand-placed pixel grids (suits, faces) and
 simple procedural patterns (card back, board tiles), scaled up with nearest-neighbor so every
 edge lands on a real pixel boundary.
 
@@ -171,18 +171,10 @@ def generate_suits():
 
 
 # ---------------------------------------------------------------------------
-# Marble: player-color fill, lighter inset facet, black outline. Deliberately not round -
-# it matches the flat, hard-edged goal-field tiles, with corners chamfered (a diagonal cut,
-# not a curve) just enough to read as softened without becoming a circle. The inset facet is
-# what tells a piece from a tile at a glance; a flat single-tone marble was too easy to
-# mistake for one. No pip or count indicator - that read as busier than intended.
+# Chamfered-square mask: the bot faces' head silhouette. (Marbles are no longer a sprite -
+# TableScene paints them as vector diamonds at device resolution, which a nearest-neighbour
+# upscaled pixel grid can't match on a diagonal edge.)
 # ---------------------------------------------------------------------------
-
-MARBLE_SIZE = 22
-MARBLE_CORNER_CUT = 7  # chamfer depth - higher is rounder, lower is more square
-MARBLE_FACET_INSET = 5  # pixels between the outer edge and the inner facet, per side
-MARBLE_FACET_CORNER_CUT = 3
-
 
 def _chamfered(x, y, inner, corner_cut):
     if x < 0 or y < 0 or x > inner or y > inner:
@@ -198,53 +190,13 @@ def _chamfered(x, y, inner, corner_cut):
     return True
 
 
-def make_marble(color, size=MARBLE_SIZE, corner_cut=MARBLE_CORNER_CUT):
-    border = PALETTE["marble_border"]
-    facet = shade(color, 1.4)
-    inner = size - 1
-
-    def outer_filled(x, y):
-        return _chamfered(x, y, inner, corner_cut)
-
-    def facet_filled(x, y):
-        fx, fy = x - MARBLE_FACET_INSET, y - MARBLE_FACET_INSET
-        facet_inner = inner - MARBLE_FACET_INSET * 2
-        return _chamfered(fx, fy, facet_inner, MARBLE_FACET_CORNER_CUT)
-
-    g = new_canvas(size, size)
-    for y in range(size):
-        for x in range(size):
-            if not outer_filled(x, y):
-                continue
-            on_edge = not (outer_filled(x - 1, y) and outer_filled(x + 1, y) and outer_filled(x, y - 1) and outer_filled(x, y + 1))
-            if on_edge:
-                set_px(g, x, y, border)
-            elif facet_filled(x, y):
-                set_px(g, x, y, facet)
-            else:
-                set_px(g, x, y, color)
-    return g
-
-
-def generate_marbles():
-    # One neutral marble, recolored per player at runtime (TableScene.tintedMarbleKey) rather
-    # than one baked PNG per color - player color is a continuous hue picked on a slider, so
-    # baking a PNG per color isn't an option. Mid-grey, not white: the recolor multiplies, and
-    # a white base would multiply every non-border pixel uniformly to the tint color, losing
-    # the facet highlight entirely.
-    neutral = (0xA8, 0xA8, 0xA8)
-    make_marble(neutral).save(os.path.join(OUT_DIR, "marble-base.png"))
-    print("marbles: ok")
-
-
 # ---------------------------------------------------------------------------
 # Bot difficulty faces (PlayerSetupPicker's singleplayer setup). A settings-screen icon, not a
 # marble or card, so - per the monochrome-UI-chrome rule above - these stay ink-on-dark rather
 # than picking up a player hue. Friendly-to-evil reads entirely from SHAPE (eyebrow angle, mouth
-# curve, horns only on the hard face), never color. Reuses make_marble's chamfered-square
-# silhouette for the head (this app's one house style for "a small rounded-but-not-round piece")
-# without its player-color fill/facet - a face has no material to shade, just an outline and
-# features drawn on top the same way the suit icons build a shape from per-row fill_range calls.
+# curve, horns only on the hard face), never color. The head is a _chamfered square - a face
+# has no material to shade, just an outline and features drawn on top the same way the suit
+# icons build a shape from per-row fill_range calls.
 # ---------------------------------------------------------------------------
 
 FACE_SIZE = 18
@@ -553,7 +505,6 @@ def generate_tiles():
 
 if __name__ == "__main__":
     generate_suits()
-    generate_marbles()
     generate_bot_faces()
     generate_card_back()
     generate_card_faces()

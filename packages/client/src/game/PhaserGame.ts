@@ -19,6 +19,27 @@ const SIZE_POLL_INTERVAL_MS = 50;
 const MAX_SIZE_POLL_ATTEMPTS = 60; // 3s worst case - generous for any real layout
 
 /**
+ * Sizes the canvas's backing store to `parent` in *device* pixels, then zooms it back down to
+ * the parent's CSS size. `pixelArt: true` has Phaser mark the canvas `image-rendering:
+ * pixelated` - which is what keeps the tile sprites crisp - but that applies to the canvas as a
+ * whole: a CSS-pixel canvas on a 2x display gets upscaled nearest-neighbour, and every
+ * antialiased diagonal on it (goal diamonds, marbles) comes out as 2px stairs. At device
+ * resolution there is no upscale left for the browser to do. TableScene zooms its camera by the
+ * same ratio, so everything it draws stays in CSS pixels.
+ *
+ * Scale.NONE rather than RESIZE, because RESIZE pins the canvas to the parent's CSS size on
+ * every refresh. NONE never touches the canvas size on its own, so resize() here is final.
+ */
+function fitToParent(game: Phaser.Game, parent: HTMLElement): boolean {
+  const { width, height } = parent.getBoundingClientRect();
+  if (width === 0 || height === 0) return false;
+  const ratio = window.devicePixelRatio || 1;
+  if (game.scale.zoom !== 1 / ratio) game.scale.setZoom(1 / ratio);
+  game.scale.resize(Math.round(width * ratio), Math.round(height * ratio));
+  return true;
+}
+
+/**
  * The flex-sized parent is frequently still 0x0 at construction time, and TableScene.create()
  * runs against whatever size it finds then. This just guarantees *a* resize happens once real
  * dimensions exist; TableScene redraws everything on the Scale Manager's 'resize' event.
@@ -30,11 +51,7 @@ const MAX_SIZE_POLL_ATTEMPTS = 60; // 3s worst case - generous for any real layo
  * so if the real size arrives without a further change to report there is no second chance.
  */
 function pollForRealSize(game: Phaser.Game, parent: HTMLElement, attemptsLeft: number) {
-  const { width, height } = parent.getBoundingClientRect();
-  if (width > 0 && height > 0) {
-    game.scale.setParentSize(width, height);
-    return;
-  }
+  if (fitToParent(game, parent)) return;
   if (attemptsLeft <= 0) return; // give up - the ResizeObserver below remains as a backstop
   setTimeout(() => pollForRealSize(game, parent, attemptsLeft - 1), SIZE_POLL_INTERVAL_MS);
 }
@@ -51,26 +68,42 @@ export function createPhaserGame(parent: HTMLElement): PhaserBridge {
     // fail silently. Phaser's manager also unlocks on first gesture, which would paper over a
     // broken unlock path in audio.ts by resuming the shared device on its behalf.
     audio: { noAudio: true },
+    // 0x0 until fitToParent runs - the same "nothing to draw yet" size RESIZE mode booted at
+    // against a 0x0 parent, which TableScene.renderPieces already skips.
     scale: {
-      mode: Phaser.Scale.RESIZE,
-      autoCenter: Phaser.Scale.CENTER_BOTH,
+      mode: Phaser.Scale.NONE,
+      width: 0,
+      height: 0,
     },
     scene: [TableScene],
   });
 
   pollForRealSize(game, parent, MAX_SIZE_POLL_ATTEMPTS);
 
-  // Backstop for later real resizes (window resize, orientation change). setParentSize, not
-  // resize: in RESIZE scale mode, ScaleManager's refresh() cycle - which Phaser's own resize
-  // listeners also trigger - re-derives canvas size from its cached parentSize, not from
-  // resize()'s arguments. resize() appears to work in the moment, then any later refresh can
-  // silently re-derive from the stale cache and undo it. setParentSize updates that cache.
-  const resizeObserver = new ResizeObserver(() => {
-    const { width, height } = parent.getBoundingClientRect();
-    if (width > 0 && height > 0) game.scale.setParentSize(width, height);
-  });
+  // Backstop for later real resizes (window resize, orientation change, browser zoom - which
+  // changes devicePixelRatio and the parent's CSS size together).
+  const resizeObserver = new ResizeObserver(() => fitToParent(game, parent));
   resizeObserver.observe(parent);
-  game.events.once('destroy', () => resizeObserver.disconnect());
+
+  // Dragging the window onto a monitor with a different pixel ratio changes no CSS size, so the
+  // ResizeObserver never hears about it. A resolution query only reports leaving the one ratio
+  // it was built for, so it is rebuilt on every change.
+  let ratioQuery: MediaQueryList | null = null;
+  const onRatioChange = () => {
+    fitToParent(game, parent);
+    watchRatio();
+  };
+  const watchRatio = () => {
+    ratioQuery?.removeEventListener('change', onRatioChange);
+    ratioQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    ratioQuery.addEventListener('change', onRatioChange);
+  };
+  watchRatio();
+
+  game.events.once('destroy', () => {
+    resizeObserver.disconnect();
+    ratioQuery?.removeEventListener('change', onRatioChange);
+  });
 
   // React only calls the setters when its own state reference changes - on mount that's a
   // single call carrying the initial state. If the scene isn't registered at that exact

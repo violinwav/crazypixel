@@ -549,19 +549,19 @@ body {
   pointer-events: none;
 }
 
-/* Card-count badges over each opponent's kennel (OpponentHandCounts.tsx) - always visible,
+/* Card-count badges over every seat's kennel, the viewer's own included (HandCounts.tsx) - always visible,
    not gated on whose turn it is. Non-interactive, but deliberately not aria-hidden: the count
    is real information, just not a control. */
-.opponent-hand-counts {
+.hand-counts {
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
 
-/* One per card in that opponent's hand, fanned with a small offset each. Shaped like a tiny
+/* One per card in that seat's hand, fanned with a small offset each. Shaped like a tiny
    playing card (same 5/7 ratio as .playing-card) so the count reads as a quantity of cards at
    a glance rather than a digit to parse. */
-.opponent-hand-counts__card {
+.hand-counts__card {
   position: absolute;
   transform: translate(-50%, -50%);
   width: 18px;
@@ -578,7 +578,7 @@ body {
 
 /* Only on the topmost card of the fan, so the exact number is still readable without going
    back to a numbered badge on every card. 11px per Departure Mono's own pixel-grid guidance. */
-.opponent-hand-counts__count {
+.hand-counts__count {
   font-family: var(--cp-font-display);
   font-size: 11px;
   font-weight: 700;
@@ -589,12 +589,12 @@ body {
 /* An empty hand: one card-sized slot, dashed so it reads as "no card here" rather than a card
    back. --player-red rather than --card-red: the 0 is 11px text on --bg-deep, where --card-red
    is only 4.2:1 and --player-red is 6.7:1 - the same red TurnTimerBar already uses for urgent. */
-.opponent-hand-counts__card--empty {
+.hand-counts__card--empty {
   border-style: dashed;
   border-color: var(--player-red);
 }
 
-.opponent-hand-counts__card--empty .opponent-hand-counts__count {
+.hand-counts__card--empty .hand-counts__count {
   color: var(--player-red);
 }
 
@@ -603,7 +603,7 @@ body {
    something anyone notices. Every step folds in the base rule's own translate(-50%, -50%),
    which is what positions the card at all - a bare transform here would replace it and fling
    the whole fan down-right by half its size. */
-@keyframes opponent-fan-pop {
+@keyframes hand-fan-pop {
   0% {
     transform: translate(-50%, -50%) scale(1);
   }
@@ -616,8 +616,8 @@ body {
   }
 }
 
-.opponent-hand-counts__card--pop {
-  animation: opponent-fan-pop 280ms ease-out both;
+.hand-counts__card--pop {
+  animation: hand-fan-pop 280ms ease-out both;
 }
 
 /* The pass-hand fallback, laid over the middle of the hand it gives up (HandPanel's overlay,
@@ -1919,32 +1919,58 @@ canvas {
   outline-offset: 2px;
 }
 
-/* DOM approximation of the Phaser marble sprite (PlayerMarble.tsx) - a chamfered square, not a
-   circle, so it reads as "the same marble" as the board's own sprites. color-mix derives the
-   lighter facet tint straight from --marble-color instead of a second hand-picked shade. */
+/* DOM copy of the board's marble (PlayerMarble.tsx, TableScene's paintMarble): a diamond cut
+   stone - dark rim, four bevels, a flat table and a glint - so a swatch reads as "the same
+   marble" as the pieces on the board. Every proportion is TableScene's, as a fraction of the
+   marble's tip-to-tip width: the rim takes MARBLE_RIM * sqrt(2) off each side (9.4%), the
+   table is MARBLE_TABLE_RATIO of what is left (34.1%), and the glint sits on the lit bevel.
+   color-mix in srgb is the same straight-line mix TableScene's shadeCss does, at the same
+   MARBLE_FACET_SHADES amounts. */
 .player-marble {
   --marble-size: 28px;
   --marble-color: #ffffff;
+  --diamond: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
   position: relative;
   display: inline-block;
   flex: 0 0 auto;
   width: var(--marble-size);
   height: var(--marble-size);
-  background: var(--marble-color);
-  clip-path: polygon(25% 0%, 75% 0%, 100% 25%, 100% 75%, 75% 100%, 25% 100%, 0% 75%, 0% 25%);
-  box-shadow: 0 0 0 2px var(--bg-deep);
-  transition: background-color 150ms var(--ease-out-quart);
+  background: #0a080a;
+  clip-path: var(--diamond);
 }
 
-.player-marble__facet {
+/* The bevels. Adjacent bevels meet along the axes (tip to table tip), so a conic gradient's
+   hard stops at the quarter turns draw every join as a straight vertical or horizontal edge. */
+.player-marble::before {
+  content: '';
   position: absolute;
-  top: 12%;
-  left: 12%;
-  width: 45%;
-  height: 45%;
-  background: color-mix(in oklch, var(--marble-color) 65%, white);
-  clip-path: polygon(20% 0%, 80% 0%, 100% 20%, 100% 80%, 80% 100%, 20% 100%, 0% 80%, 0% 20%);
-  transition: background-color 150ms var(--ease-out-quart);
+  inset: 9.4%;
+  clip-path: var(--diamond);
+  background: conic-gradient(
+    color-mix(in srgb, var(--marble-color), white 20%) 0 25%,
+    color-mix(in srgb, var(--marble-color), black 20%) 0 50%,
+    color-mix(in srgb, var(--marble-color), black 8%) 0 75%,
+    color-mix(in srgb, var(--marble-color), white 50%) 0
+  );
+}
+
+.player-marble__table {
+  position: absolute;
+  inset: 32.95%;
+  clip-path: var(--diamond);
+  background: var(--marble-color);
+}
+
+.player-marble::after {
+  content: '';
+  position: absolute;
+  top: 30.3%;
+  left: 30.3%;
+  width: 10.6%;
+  height: 10.6%;
+  clip-path: var(--diamond);
+  background: #ffffff;
+  opacity: 0.9;
 }
 
 /* Marble-as-disclosure-toggle (MarbleColorPicker.tsx) - one shared control everywhere a
@@ -2598,17 +2624,18 @@ canvas {
    captions carry the "one full lap" part that the straight line can't.
 
    Everything below is sized off the marble, exactly as the board is. On the ring a marble is
-   MARBLE_SIZE (22px, generate-sprites.py) and every field is a multiple of it: kennel socket
-   30/22, goal slot 24/22, trail mark 0.72, track tile TRACK_TILE_GAP (0.68), flash 1.4 (all
-   from TableScene). Putting the marble at 78% of a column reproduces those proportions here,
-   so a track tile really is a little over half the marble standing on it, the way it is in
-   game - checked against a running 4-player board, not just derived on paper. The tile also
-   carries TableScene's length shrink at its 4-player value (0.68 * 0.75), since that is the
-   board everyone actually sees. */
+   a diamond 30px tip to tip (2 * MARBLE_REACH) and every field is a multiple of it: kennel
+   socket and goal slot 40/30 (a reach of 19 plus the outer half of their 2px stroke), trail
+   mark 0.72, flash 42/30, track tile the 22px sprite at TRACK_TILE_GAP (0.68) (all from
+   TableScene). Putting the marble at 78% of a column reproduces those proportions here. The
+   tile also carries TableScene's length shrink at its 4-player value (0.68 * 0.75), since
+   that is the board everyone actually sees. */
 .rules-track {
   position: relative;
-  /* generate-sprites.py's MARBLE_CORNER_CUT and TableScene's FIELD_CHAMFER_RATIO, both 7/22:
-     the diagonal cut every field and every marble on the board shares. */
+  /* TableScene's shape for every piece and field. */
+  --diamond: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  /* TableScene's TRAIL_CHAMFER_RATIO (7/22) - trail marks alone keep the chamfered square, so a
+     footprint never reads as a second marble. */
   --chamfer: polygon(
     31.8% 0%, 68.2% 0%, 100% 31.8%, 100% 68.2%,
     68.2% 100%, 31.8% 100%, 0% 68.2%, 0% 31.8%
@@ -2636,48 +2663,52 @@ canvas {
      without this the browser shrinks anything wider than the slot back to fit, and the kennel
      socket silently loses the overhang that makes it a socket. */
   flex: 0 0 auto;
-  width: 39.8%;
+  width: 29.2%;
   aspect-ratio: 1;
   background-image: var(--tile);
   background-size: 100% 100%;
   image-rendering: pixelated;
 }
 
-/* Chamfered socket with a dark rim. The outer box IS the rim and ::before is the fill,
+/* Diamond socket with a dark rim. The outer box IS the rim and ::before is the fill,
    because clip-path cuts a border away rather than shaping it. */
 .rules-track__field {
   flex: 0 0 auto;
   aspect-ratio: 1;
   position: relative;
   background: var(--field-edge);
-  clip-path: var(--chamfer);
+  clip-path: var(--diamond);
 }
 
 /* --field-fill must be OPAQUE. The outer box paints the rim colour across the whole shape and
    this covers all but its edge, so a translucent fill lets the rim colour flood the middle -
    which turned the goal slots into solid discs of the player's colour instead of outlines.
-   Where the board fills with alpha, pre-composite it against the stage instead (see --goal). */
+   Where the board draws with alpha, pre-composite it against the stage instead (see --goal).
+   The 3px inset is a 2px rim measured square to the diamond's sloped edges (2 * sqrt(2)). */
 .rules-track__field::before {
   content: '';
   position: absolute;
-  inset: 2px;
+  inset: 3px;
   background: var(--field-fill);
-  clip-path: var(--chamfer);
+  clip-path: var(--diamond);
 }
 
 .rules-track__field--kennel {
-  width: 106.4%;
+  width: 104%;
   --field-fill: var(--bg-raised);
 }
 
 /* The only place a player's colour touches board chrome, and it is an OUTLINE, not a disc:
-   TableScene strokes the goal polygon in the owner's colour over a fill of PALETTE.ink at
-   0.16, which against the board reads as barely lighter than the background. That 0.16 is
-   baked into a flat colour here rather than left translucent - see the note above ::before. */
+   TableScene strokes each goal slot in the owner's colour at GOAL_OPEN_ALPHA (0.4) with
+   nothing inside. Drawn here as the closed diamond - the board's gaps between the four
+   chevron tips don't survive this size - with that 0.4 baked into a flat colour rather than
+   left translucent (see the note above ::before). Smaller than the board's 40/30: goal slots
+   here sit one column apart, closer than the board's 45px goal step, and at full size
+   neighbouring diamonds met tip to tip. */
 .rules-track__field--goal {
-  width: 85.1%;
-  --field-edge: color-mix(in srgb, var(--goal-edge) 85%, transparent);
-  --field-fill: color-mix(in srgb, var(--ink) 16%, var(--bg-deep));
+  width: 92%;
+  --field-edge: color-mix(in srgb, var(--goal-edge) 40%, var(--bg-deep));
+  --field-fill: var(--bg-deep);
 }
 
 .rules-track__fx {
@@ -2725,9 +2756,8 @@ canvas {
   }
 }
 
-/* TableScene marks both a capture and a home arrival with a plain white rectangle that fades
-   out - no chamfer there either. Here they rest faint rather than vanishing, so a paused
-   frame still shows where it happened. */
+/* TableScene marks a home arrival with a plain white diamond that fades out. Here these rest
+   faint rather than vanishing, so a paused frame still shows where it happened. */
 .rules-track__capture,
 .rules-track__home-flash {
   position: absolute;
@@ -2743,7 +2773,7 @@ canvas {
   justify-content: center;
 }
 
-/* 1.4x the marble, matching playHomeArrival's flash rect - it deliberately spills past the
+/* 1.4x the marble, matching playHomeArrival's flash diamond - it deliberately spills past the
    square it marks. */
 .rules-track__capture::before {
   content: '';
@@ -2751,6 +2781,7 @@ canvas {
   width: 109.2%;
   aspect-ratio: 1;
   background: var(--ink);
+  clip-path: var(--diamond);
 }
 
 .rules-track__home-flash {

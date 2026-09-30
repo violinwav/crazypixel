@@ -6,13 +6,7 @@ import { playerLabel } from './game/playerName';
 interface Props {
   state: GameState;
   containerSize: { width: number; height: number };
-  /** Whose hand stays out of this list - the actual acting seat, NOT necessarily the seat the
-   * board is rotated to face. The two diverge in local hotseat: mySeat tracks
-   * state.currentPlayer every turn (correctly hiding whoever is playing from their own
-   * "opponents" list), while viewerSeat below stays fixed. */
-  mySeat: PlayerId;
-  /** Which seat's base renders at the bottom of the ring - purely for badge placement, and
-   * deliberately separate from mySeat (they are equal online, but not in hotseat). */
+  /** Which seat's base renders at the bottom of the ring - purely for badge placement. */
   viewerSeat: PlayerId;
   playerNames?: string[];
   /** Briefly set to the seat a stolen card has just landed on. The stack itself pops, which is
@@ -34,25 +28,26 @@ interface Props {
 const CARD_OFFSET = 7;
 
 /**
- * A small fanned stack of card-back icons over each opponent's kennel - one icon per card in
- * their hand, so the count reads as a quantity at a glance instead of a number to parse. The
- * only thing about an opponent's hand this game shows; the cards themselves stay private.
- * Always visible rather than gated on whose turn it is, and positioned by the same
- * rotation-aware geometry as everything else on the board.
+ * A small fanned stack of card-back icons over every seat's kennel, the viewer's own included -
+ * one icon per card in that hand, so the count reads as a quantity at a glance instead of a
+ * number to parse. The viewer's own stack is there even though their hand panel shows the cards:
+ * the panel is hidden off-turn online, and one uniform indicator on every seat is easier to
+ * compare than a stack for everyone else and a card row for yourself. Always visible rather than
+ * gated on whose turn it is, and positioned by the same rotation-aware geometry as everything
+ * else on the board.
  *
  * The fan is a role="img" with the count in its label, so the quantity is available without
  * counting decorative spans.
  */
-export function OpponentHandCounts({ state, containerSize, mySeat, viewerSeat, playerNames, poppingSeat, spentCard }: Props) {
+export function HandCounts({ state, containerSize, viewerSeat, playerNames, poppingSeat, spentCard }: Props) {
   if (containerSize.width === 0) return null;
   const geo = computeBoardGeometry(
     containerSize.width, containerSize.height, trackLengthFor(state.config), viewerSeat, state.config.playerCount,
   );
-  const opponents = activePlayerIds(state.config).filter((p) => p !== mySeat);
 
   return (
-    <div className="opponent-hand-counts" role="group" aria-label="Opponent card counts">
-      {opponents.map((p) => {
+    <div className="hand-counts" role="group" aria-label="Card counts">
+      {activePlayerIds(state.config).map((p) => {
         const { x, y } = handCountPoint(state.config, p, geo);
         // The fan runs perpendicular to this seat's radial line, i.e. tangential to the ring,
         // as though the row of cards were laid flat in front of their home row rather than
@@ -75,11 +70,11 @@ export function OpponentHandCounts({ state, containerSize, mySeat, viewerSeat, p
               return (
                 <span
                   key={i}
-                  className={`opponent-hand-counts__card${count === 0 ? ' opponent-hand-counts__card--empty' : ''}${p === poppingSeat ? ' opponent-hand-counts__card--pop' : ''}`}
+                  className={`hand-counts__card${count === 0 ? ' hand-counts__card--empty' : ''}${p === poppingSeat ? ' hand-counts__card--pop' : ''}`}
                   style={{ left: x + offset * dx, top: y + offset * dy }}
                 >
                   {isTop && (
-                    <span className="opponent-hand-counts__count" aria-hidden="true">{count}</span>
+                    <span className="hand-counts__count" aria-hidden="true">{count}</span>
                   )}
                 </span>
               );

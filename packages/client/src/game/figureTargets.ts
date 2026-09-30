@@ -77,7 +77,7 @@ function figureFor(state: GameState, move: Move, geo: BoardGeometry): FigureInfo
       return inner.steps.length === 1 ? marbleFigure(state, inner.steps[0].marbleId, geo) : null;
     case 'forceDraw': {
       // The steal reaches into their *hand*, so the ring belongs on the fanned card icons
-      // that represent it (OpponentHandCounts, anchored at handCountPoint), not on their
+      // that represent it (HandCounts, anchored at handCountPoint), not on their
       // kennel cluster, whose marbles the move never touches.
       const point = handCountPoint(config, inner.targetPlayer, geo);
       return { key: `opponent:${inner.targetPlayer}`, point, label: `Player ${inner.targetPlayer + 1}'s hand - draw a card` };

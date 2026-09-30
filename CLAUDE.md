@@ -95,6 +95,12 @@ online multiplayer (host/join by room code) both work today - see Architecture b
   combined selector, not two separate rules — a plain `.playing-card` rule elsewhere in the
   file has equal specificity and *will* win on file order alone if this gets split apart,
   silently breaking responsive card sizing on narrow viewports.
+- **The Phaser canvas is device-pixel sized, the scene is not.** `pixelArt: true` makes Phaser
+  mark the canvas `image-rendering: pixelated`, so a CSS-sized canvas on a Retina screen gets
+  upscaled nearest-neighbour and every diagonal edge stair-steps. `PhaserGame.ts`'s
+  `fitToParent` runs `Scale.NONE` at `devicePixelRatio` with `zoom = 1/dpr`, and `TableScene`
+  zooms its camera by `dpr` so everything it draws stays in CSS px. Inside the scene,
+  `this.scale.width/height` are *device* pixels - lay out against `viewWidth`/`viewHeight`.
 - **Backward movement (the 4 card) never enters home directly.** It's a plain wraparound walk
   around the track; landing exactly on your own base square by going backward earns the
   *right* to enter home on a later, separate forward move — `planMovement` doesn't special-

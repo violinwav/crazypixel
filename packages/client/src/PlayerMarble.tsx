@@ -10,10 +10,10 @@ interface Props {
 }
 
 /**
- * A DOM approximation of the Phaser marble sprite (generate-sprites.py's make_marble -
- * chamfered square, dark border, lighter inset facet catching light from the top left).
- * Reused everywhere a marble color needs a preview off the board, so those swatches read as
- * "the same marble" rather than a generic colored dot.
+ * A DOM copy of the board's marble (TableScene's paintMarble - a diamond cut stone: dark rim,
+ * four bevels lit from the top left, a flat table and a glint). Reused everywhere a marble
+ * color needs a preview off the board, so those swatches read as "the same marble" rather
+ * than a generic colored dot.
  *
  * Purely decorative - the hue is always labelled in text beside it.
  */
@@ -25,7 +25,7 @@ export function PlayerMarble({ hue, size = '28px', className }: Props) {
       className={`player-marble${className ? ` ${className}` : ''}`}
       style={{ '--marble-size': size, '--marble-color': color } as CSSProperties}
     >
-      <span className="player-marble__facet" />
+      <span className="player-marble__table" />
     </span>
   );
 }
