@@ -64,15 +64,18 @@ export function OpponentHandCounts({ state, containerSize, mySeat, viewerSeat, p
         const spent = spentCard?.seat === p && state.hands[p].some((c) => c.id === spentCard.cardId) ? 1 : 0;
         const count = state.hands[p].length - spent;
         const label = `${playerLabel(playerNames, p)} has ${count} card${count === 1 ? '' : 's'}`;
+        const slots = Math.max(count, 1);
         return (
           <div key={p} role="img" aria-label={label}>
-            {Array.from({ length: count }, (_, i) => {
-              const offset = (i - (count - 1) / 2) * CARD_OFFSET;
-              const isTop = i === count - 1;
+            {/* An empty hand still draws one (empty) slot: rendering nothing reads as "no badge
+                here" rather than "zero cards", and the spot is easy to miss entirely. */}
+            {Array.from({ length: slots }, (_, i) => {
+              const offset = (i - (slots - 1) / 2) * CARD_OFFSET;
+              const isTop = i === slots - 1;
               return (
                 <span
                   key={i}
-                  className={`opponent-hand-counts__card${p === poppingSeat ? ' opponent-hand-counts__card--pop' : ''}`}
+                  className={`opponent-hand-counts__card${count === 0 ? ' opponent-hand-counts__card--empty' : ''}${p === poppingSeat ? ' opponent-hand-counts__card--pop' : ''}`}
                   style={{ left: x + offset * dx, top: y + offset * dy }}
                 >
                   {isTop && (

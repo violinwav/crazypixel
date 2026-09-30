@@ -522,6 +522,18 @@ body {
   color: var(--ink);
 }
 
+/* An empty hand: one card-sized slot, dashed so it reads as "no card here" rather than a card
+   back. --player-red rather than --card-red: the 0 is 11px text on --bg-deep, where --card-red
+   is only 4.2:1 and --player-red is 6.7:1 - the same red TurnTimerBar already uses for urgent. */
+.opponent-hand-counts__card--empty {
+  border-style: dashed;
+  border-color: var(--player-red);
+}
+
+.opponent-hand-counts__card--empty .opponent-hand-counts__count {
+  color: var(--player-red);
+}
+
 /* One beat as a stolen card lands on this stack. The count has already ticked up by the time
    the flight ends, and a number changing while the eye follows a card across the board is not
    something anyone notices. Every step folds in the base rule's own translate(-50%, -50%),
