@@ -17,7 +17,7 @@
 
 import Phaser from 'phaser';
 import {
-  HOME_STRETCH_LENGTH, KENNEL_SIZE, activePlayerIds, startIndexFor, trackLengthFor,
+  HOME_STRETCH_LENGTH, KENNEL_SIZE, activePlayerIds, isMarbleSettled, startIndexFor, trackLengthFor,
 } from '@crazypixel/shared';
 import type { GameState, Marble, PlayerId } from '@crazypixel/shared';
 import {
@@ -94,6 +94,10 @@ const GOAL_TIP_REACH = 19;
 const GOAL_TIP_ARM = 8;
 const GOAL_WEIGHT = 2;
 const GOAL_MIN_WEIGHT = 1.5;
+// An open goal slot is a hint of where to go, not a finished thing, so it sits back at partial
+// strength. Full color is saved for a settled marble's closed diamond (updateSettled), so
+// "done, never moving again" is the loudest state a goal slot can be in.
+const GOAL_OPEN_ALPHA = 0.4;
 
 // --- Motion ---------------------------------------------------------------
 
@@ -228,18 +232,34 @@ function drawCornerBrackets(
 
 /**
  * A goal slot: four chevron tips of a diamond, one per compass point, with open gaps between
- * them. Stroked lines rather than the guard's filled rects - a filled rect only stays crisp
- * axis-aligned, and rotated it breaks into a muddy staircase. No dark edge either: it sits on
- * boardLayer, under the marbles, so nothing ever overlaps it the way the guard reticle can.
+ * them - or, `closed`, the full diamond outline with the gaps joined up. Stroked lines rather
+ * than the guard's filled rects - a filled rect only stays crisp axis-aligned, and rotated it
+ * breaks into a muddy staircase. No dark edge either: it sits under the marbles, so nothing
+ * ever overlaps it the way the guard reticle can.
  */
-function drawGoalDiamond(g: Phaser.GameObjects.Graphics, cx: number, cy: number, scale: number, color: number) {
+function drawGoalDiamond(
+  g: Phaser.GameObjects.Graphics,
+  cx: number,
+  cy: number,
+  scale: number,
+  color: number,
+  { alpha = 1, closed = false } = {},
+) {
   const x0 = Math.round(cx);
   const y0 = Math.round(cy);
   const reach = GOAL_TIP_REACH * scale;
+  const tips = [[0, -1], [1, 0], [0, 1], [-1, 0]].map(([dx, dy]) => ({ x: x0 + dx * reach, y: y0 + dy * reach }));
+  g.lineStyle(Math.max(GOAL_MIN_WEIGHT, GOAL_WEIGHT * scale), color, alpha);
+  if (closed) {
+    g.beginPath();
+    g.moveTo(tips[0].x, tips[0].y);
+    for (const tip of tips.slice(1)) g.lineTo(tip.x, tip.y);
+    g.closePath();
+    g.strokePath();
+    return;
+  }
   // Fraction of the way from a tip toward each neighbouring tip - the rest is the gap.
   const t = GOAL_TIP_ARM / (GOAL_TIP_REACH * Math.SQRT2);
-  const tips = [[0, -1], [1, 0], [0, 1], [-1, 0]].map(([dx, dy]) => ({ x: x0 + dx * reach, y: y0 + dy * reach }));
-  g.lineStyle(Math.max(GOAL_MIN_WEIGHT, GOAL_WEIGHT * scale), color, 1);
   tips.forEach((tip, i) => {
     const prev = tips[(i + 3) % 4];
     const next = tips[(i + 1) % 4];
@@ -303,6 +323,11 @@ export class TableScene extends Phaser.Scene {
   private killWaves: { x: number; y: number; progress: number }[] = [];
 
   private boardLayer?: Phaser.GameObjects.Container;
+  /**
+   * Closed goal diamonds for settled marbles. Just above boardLayer so a closed outline paints
+   * over the open chevrons it completes, and below the marbles like every other field mark.
+   */
+  private settledLayer?: Phaser.GameObjects.Container;
   private decorLayer?: Phaser.GameObjects.Container;
   /**
    * Fading path markers. Its own container because, unlike the layers above, it is never
@@ -332,6 +357,8 @@ export class TableScene extends Phaser.Scene {
   private marbleSprites = new Map<string, Phaser.GameObjects.Image>();
   /** marble id -> its reticle, for the marbles currently carrying start protection. */
   private guardMarks = new Map<string, Phaser.GameObjects.Graphics>();
+  /** marble id -> the closed goal diamond under it, for every settled marble (isMarbleSettled). */
+  private settledMarks = new Map<string, Phaser.GameObjects.Graphics>();
   /** hue -> generated texture key, filled lazily by tintedMarbleKey. */
   private marbleTextureCache = new Map<number, string>();
   private pendingPlan: MarbleAnimation[] = [];
@@ -375,6 +402,7 @@ export class TableScene extends Phaser.Scene {
     this.glowImage = this.add.image(0, 0, 'turn-glow').setOrigin(0, 0);
     this.glowLayer.add(this.glowImage);
     this.boardLayer = this.add.container(0, 0);
+    this.settledLayer = this.add.container(0, 0);
     this.decorLayer = this.add.container(0, 0);
     // Between board and marbles in draw order: a trail marker paints over the track tile it
     // marks, and the marble paints over its own trail.
@@ -450,6 +478,7 @@ export class TableScene extends Phaser.Scene {
     this.syncTurnGlow();
     this.redrawBoard();
     this.updateMarbles(animate);
+    this.updateSettled(animate);
     this.updateGuards(animate);
     this.updateDecor();
   }
@@ -502,14 +531,15 @@ export class TableScene extends Phaser.Scene {
         );
       }
       // Goal slots: the base-guard's corner brackets turned 45deg into a diamond, in the
-      // owner's color. Brackets rather than a filled field so an occupied slot never hides the
-      // marble in it, and the color alone marks whose goal it is - "where do I need to get to"
-      // at a glance. One Graphics per player: these never move or animate individually.
+      // owner's color at partial strength. Brackets rather than a filled field so an occupied
+      // slot never hides the marble in it, and the color alone marks whose goal it is - "where
+      // do I need to get to" at a glance. One Graphics per player: these never move or animate
+      // individually. A settled marble's slot is closed over this by updateSettled.
       const goalMarks = this.add.graphics();
       const color = hueToHex(this.colorAssignment[player]);
       for (let slot = 0; slot < HOME_STRETCH_LENGTH; slot++) {
         const { x, y } = homeSlotPoint(config, player, slot, this.geo);
-        drawGoalDiamond(goalMarks, x, y, this.pieceScale, color);
+        drawGoalDiamond(goalMarks, x, y, this.pieceScale, color, { alpha: GOAL_OPEN_ALPHA });
       }
       this.boardLayer!.add(goalMarks);
     });
@@ -634,6 +664,60 @@ export class TableScene extends Phaser.Scene {
       if (!seen.has(id)) {
         sprite.destroy();
         this.marbleSprites.delete(id);
+      }
+    }
+  }
+
+  // --- Settled goal slots ------------------------------------------------
+
+  /**
+   * Closes the goal diamond under every settled marble - one that has reached the deepest
+   * home slot still open to it (isMarbleSettled) and so will never move again - at full
+   * color, over the partial-strength open chevrons redrawBoard leaves on every goal slot.
+   *
+   * Like the guard reticle, a settled marble is stationary for good, so a mark never has to
+   * follow a tween; it only has to wait for its marble to arrive. Redrawn every render, since
+   * pieceScale changes on a resize and a Graphics object bakes its path in at draw time.
+   */
+  private updateSettled(animate: boolean) {
+    if (!this.settledLayer || !this.state) return;
+    const settled = this.state.marbles.filter((m) => isMarbleSettled(this.state!, m));
+    const settledIds = new Set(settled.map((m) => m.id));
+
+    // Only a new game (rematch) ever unsettles a marble, but that has to clear these too.
+    for (const [id, mark] of this.settledMarks) {
+      if (settledIds.has(id)) continue;
+      this.tweens.killTweensOf(mark);
+      mark.destroy();
+      this.settledMarks.delete(id);
+    }
+
+    const planByMarble = new Map(this.pendingPlan.map((p) => [p.marbleId, p]));
+    for (const marble of settled) {
+      const { x, y } = this.marblePoint(marble);
+      const existing = this.settledMarks.get(marble.id);
+      const mark = existing ?? this.add.graphics();
+      mark.clear();
+      drawGoalDiamond(mark, 0, 0, this.pieceScale, hueToHex(this.colorAssignment[marble.owner]), { closed: true });
+      mark.setPosition(Math.round(x), Math.round(y));
+      if (existing) continue;
+      this.settledLayer.add(mark);
+      this.settledMarks.set(marble.id, mark);
+      if (!animate) continue;
+      // Closes the moment the marble lands, not when the move commits - the same arrival
+      // timing updateMarbles uses. Online plays arrive with no plan (see GameBoard's
+      // lastPlanRef), so those fall back to the plain tween's duration.
+      const planned = planByMarble.get(marble.id);
+      const arrival = planned?.kind === 'walk'
+        ? (planned.trackIndices.length + (planned.entersHomeSlot !== null ? 1 : 0)) * WALK_STEP_MS
+        : MOVE_TWEEN_MS;
+      mark.setAlpha(0);
+      // theme.css's blanket prefers-reduced-motion rule only reaches CSS - a Phaser tween has
+      // to ask for itself.
+      if (prefersReducedMotion()) {
+        this.time.delayedCall(arrival, () => mark.setAlpha(1));
+      } else {
+        this.tweens.add({ targets: mark, alpha: 1, duration: MOVE_TWEEN_MS, delay: arrival });
       }
     }
   }

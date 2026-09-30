@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyMove, getLegalMoves, planMovement } from '../src';
+import { applyMove, getLegalMoves, isMarbleSettled, planMovement } from '../src';
 import { board, card, inHome, marble, ofKind, onTrack } from './helpers';
 
 // 4 players: 64-square track, seat p starts at p * 16.
@@ -144,5 +144,41 @@ describe('landing capture (every card but the 7)', () => {
     onTrack(state, 'p0-m1', 25);
     const moves = ofKind(getLegalMoves(state, 0, card('5')), 'moveMarble');
     expect(moves.some((m) => m.marbleId === 'p0-m0')).toBe(false);
+  });
+});
+
+describe('isMarbleSettled', () => {
+  it('settles a marble on the deepest home slot', () => {
+    const state = board();
+    expect(isMarbleSettled(state, inHome(state, 'p0-m0', 3))).toBe(true);
+  });
+
+  it('settles a marble whose every deeper slot is already filled by its own marbles', () => {
+    const state = board();
+    inHome(state, 'p0-m0', 3);
+    inHome(state, 'p0-m1', 2);
+    const m = inHome(state, 'p0-m2', 1);
+    expect(isMarbleSettled(state, m)).toBe(true);
+  });
+
+  it('does not settle a marble with an open slot anywhere ahead of it', () => {
+    const state = board();
+    inHome(state, 'p0-m0', 3);
+    const m = inHome(state, 'p0-m1', 1);
+    expect(isMarbleSettled(state, m)).toBe(false);
+    expect(isMarbleSettled(state, inHome(state, 'p0-m2', 0))).toBe(false);
+  });
+
+  it('never settles a marble outside home', () => {
+    const state = board();
+    expect(isMarbleSettled(state, onTrack(state, 'p0-m0', 5))).toBe(false);
+    expect(isMarbleSettled(state, marble(state, 'p0-m1'))).toBe(false);
+  });
+
+  it("ignores other players' home stretches", () => {
+    const state = board();
+    inHome(state, 'p1-m0', 3);
+    inHome(state, 'p1-m1', 2);
+    expect(isMarbleSettled(state, inHome(state, 'p0-m0', 1))).toBe(false);
   });
 });

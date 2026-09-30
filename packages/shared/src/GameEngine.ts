@@ -328,6 +328,23 @@ function homeStretchOvertake(state: GameState, marble: Marble, plan: MovementPla
   return false;
 }
 
+/**
+ * Has this marble reached the deepest home slot still open to it - every slot past it already
+ * filled by its owner's own marbles? Home marbles can't hop each other (homeStretchOvertake)
+ * and a backward 4 can never fit inside a 4-slot stretch (planMovement), so a settled marble
+ * will never move again.
+ */
+export function isMarbleSettled(state: GameState, marble: Marble): boolean {
+  if (marble.location.zone !== 'home') return false;
+  for (let index = marble.location.index + 1; index < HOME_STRETCH_LENGTH; index++) {
+    const filled = state.marbles.some(
+      (m) => m.owner === marble.owner && m.location.zone === 'home' && m.location.index === index,
+    );
+    if (!filled) return false;
+  }
+  return true;
+}
+
 function isMoveClear(state: GameState, marble: Marble, steps: number): boolean {
   const plan = planMovement(state, marble, steps);
   if (!plan.legal || !plan.trackPassed.every((i) => !isBlockaded(state, i))) return false;
