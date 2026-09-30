@@ -56,11 +56,14 @@ const REFERENCE_TRACK_LENGTH = 48;
 // clamp in computeBoardGeometry: a smaller outermost ratio means more of the viewport
 // reaches the ring itself instead of being spent on empty space beyond it.
 const KENNEL_RATIO = 260 / REFERENCE_TRACK_RADIUS;
-// Slot 0 (outermost) sits inside the ring with a clear gap to the start tile; each further
-// slot steps 30px further in, which against TableScene's 14px goal tile leaves real daylight
-// between markers rather than just avoiding a touch.
-const HOME_OUTER_RATIO = 190 / REFERENCE_TRACK_RADIUS;
-const HOME_STEP_RATIO = 30 / REFERENCE_TRACK_RADIUS;
+// Slot 0 (outermost) sits well inside the ring, so its diamond (TableScene's goal marker,
+// tips 19px from center) keeps ~15px of daylight from the start tile rather than crowding
+// it. Each further slot steps 45px in: two tip reaches plus 7px between neighbours. The
+// ceiling on both is 6 players, where adjacent stretches sit 60deg apart and the innermost
+// diamonds of neighbouring stretches are only as far apart as the innermost slot's radius
+// (45px here) - any further inward and they start to touch.
+const HOME_OUTER_RATIO = 180 / REFERENCE_TRACK_RADIUS;
+const HOME_STEP_RATIO = 45 / REFERENCE_TRACK_RADIUS;
 // Opponent hand-count badges (OpponentHandCounts.tsx) sit here, not at kennelRadius, so they
 // clear the kennel cluster instead of landing on top of it.
 const HAND_COUNT_RATIO = 310 / REFERENCE_TRACK_RADIUS;
@@ -124,8 +127,11 @@ export function computeBoardGeometry(
     trackRadius,
     kennelRadius: trackRadius * KENNEL_RATIO,
     handCountRadius: trackRadius * HAND_COUNT_RATIO,
-    homeRadiusOuter: trackRadius * HOME_OUTER_RATIO,
-    homeRadiusStep: trackRadius * HOME_STEP_RATIO,
+    // Whole pixels, so every slot lands the same distance from the last once TableScene
+    // rounds each goal marker onto the pixel grid - a fractional step rounds to alternating
+    // 22/23px gaps that read as uneven spacing.
+    homeRadiusOuter: Math.round(trackRadius * HOME_OUTER_RATIO),
+    homeRadiusStep: Math.round(trackRadius * HOME_STEP_RATIO),
     stackOffset: trackRadius * STACK_OFFSET_RATIO,
     stackCenter,
     rotation,

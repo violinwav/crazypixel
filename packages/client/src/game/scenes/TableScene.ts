@@ -35,12 +35,12 @@ import type { CardDrawAnimation, MarbleAnimation, TurnAnimation } from '../anima
 // --- Pieces and fields ----------------------------------------------------
 
 const MARBLE_SIZE = 24;
-// Kennel and goal fields are chamfered squares with the same cut-corner silhouette as
+// Kennel fields are chamfered squares with the same cut-corner silhouette as
 // generate-sprites.py's make_marble (7/22), not circles, so a field reads as the same shape
-// family as the piece that sits in it. Kennel is larger than a marble (a socket the piece
-// drops into); goal is smaller, a discreet waypoint marker.
+// family as the piece that sits in it, and a little larger than a marble (a socket the piece
+// drops into). Goal fields are diamonds of four chevron tips in the owner's color
+// (drawGoalDiamond).
 const HOME_FIELD_DIAMETER = MARBLE_SIZE + 8;
-const GOAL_FIELD_DIAMETER = MARBLE_SIZE + 2;
 const FIELD_CHAMFER_RATIO = 7 / 22;
 // Matches generate-sprites.py's PALETTE['marble_border'] - the outline every marble already
 // carries, reused so a field's border reads as the same ink.
@@ -83,6 +83,17 @@ const GUARD_OUTLINE = 1;
 // 8/3/1 reference bracket into 3.8/1.4/0.5 px - four specks rather than a frame.
 const GUARD_MIN_ARM = 5;
 const GUARD_MIN_WEIGHT = 2;
+
+// --- Goal-slot diamond ----------------------------------------------------
+// Reference px. Reach is center-to-tip, sized so the diamond outlines a whole marble: the
+// marble's chamfered corners sit at |x|+|y| = 16.4, so 19 clears them with room for the
+// stroke. boardLayout.ts's 45px slot step leaves 7px between neighbouring tips. Arm is each
+// chevron leg's length along the ~27px edge, under a third of it, so the four tips read as
+// separate marks around an open center.
+const GOAL_TIP_REACH = 19;
+const GOAL_TIP_ARM = 8;
+const GOAL_WEIGHT = 2;
+const GOAL_MIN_WEIGHT = 1.5;
 
 // --- Motion ---------------------------------------------------------------
 
@@ -167,6 +178,77 @@ function turnGlowBand(v: number, cx: number, cy: number, levels: number[] = TURN
   const bayerThreshold = TURN_GLOW_BAYER[cy % 4][cx % 4] / 16;
   const level = frac > bayerThreshold ? base + 1 : base;
   return levels[Math.max(0, Math.min(levels.length - 1, level))];
+}
+
+/**
+ * Four corner brackets framing a square of half-extent `halfRef` (reference px) centered on
+ * (cx, cy): a `core`-colored L per corner with a MARBLE_BORDER_COLOR edge. Shared by the
+ * base-guard reticle and the goal slots so both read as the same mark.
+ *
+ * Every dimension is rounded to whole pixels, and so is the center. Phaser's `pixelArt: true`
+ * only turns off smoothing for drawImage - a Graphics fillRect is a real Canvas2D path and
+ * antialiases on fractional coordinates regardless. That matters most for the guard reticle:
+ * a 1px dark edge split across two rows renders at roughly half alpha, and over a light
+ * marble the blend lands around 2.5:1 - failing exactly when the frame overlaps a neighbour,
+ * which is the case the dark edge exists for.
+ */
+function drawCornerBrackets(
+  g: Phaser.GameObjects.Graphics,
+  cx: number,
+  cy: number,
+  halfRef: number,
+  scale: number,
+  core: number,
+) {
+  const x0 = Math.round(cx);
+  const y0 = Math.round(cy);
+  const half = Math.round(halfRef * scale);
+  const arm = Math.round(Math.max(GUARD_MIN_ARM, GUARD_ARM * scale));
+  const weight = Math.round(Math.max(GUARD_MIN_WEIGHT, GUARD_WEIGHT * scale));
+  const outline = Math.round(Math.max(1, GUARD_OUTLINE * scale));
+
+  // Each corner is one horizontal and one vertical arm sharing an outer corner pixel.
+  const arms: [number, number, number, number][] = [];
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      for (const [w, h] of [[arm, weight], [weight, arm]] as const) {
+        arms.push([x0 + (sx > 0 ? half - w : -half), y0 + (sy > 0 ? half - h : -half), w, h]);
+      }
+    }
+  }
+
+  // Every outline first, then every core - not outline-then-core per arm. Drawn per arm, the
+  // second arm's outline paints a dark seam straight through the corner the two share, and
+  // the bracket reads as two detached ticks instead of one L.
+  g.fillStyle(MARBLE_BORDER_COLOR, 1);
+  for (const [x, y, w, h] of arms) g.fillRect(x - outline, y - outline, w + outline * 2, h + outline * 2);
+  g.fillStyle(core, 1);
+  for (const [x, y, w, h] of arms) g.fillRect(x, y, w, h);
+}
+
+/**
+ * A goal slot: four chevron tips of a diamond, one per compass point, with open gaps between
+ * them. Stroked lines rather than the guard's filled rects - a filled rect only stays crisp
+ * axis-aligned, and rotated it breaks into a muddy staircase. No dark edge either: it sits on
+ * boardLayer, under the marbles, so nothing ever overlaps it the way the guard reticle can.
+ */
+function drawGoalDiamond(g: Phaser.GameObjects.Graphics, cx: number, cy: number, scale: number, color: number) {
+  const x0 = Math.round(cx);
+  const y0 = Math.round(cy);
+  const reach = GOAL_TIP_REACH * scale;
+  // Fraction of the way from a tip toward each neighbouring tip - the rest is the gap.
+  const t = GOAL_TIP_ARM / (GOAL_TIP_REACH * Math.SQRT2);
+  const tips = [[0, -1], [1, 0], [0, 1], [-1, 0]].map(([dx, dy]) => ({ x: x0 + dx * reach, y: y0 + dy * reach }));
+  g.lineStyle(Math.max(GOAL_MIN_WEIGHT, GOAL_WEIGHT * scale), color, 1);
+  tips.forEach((tip, i) => {
+    const prev = tips[(i + 3) % 4];
+    const next = tips[(i + 1) % 4];
+    g.beginPath();
+    g.moveTo(tip.x + (prev.x - tip.x) * t, tip.y + (prev.y - tip.y) * t);
+    g.lineTo(tip.x, tip.y);
+    g.lineTo(tip.x + (next.x - tip.x) * t, tip.y + (next.y - tip.y) * t);
+    g.strokePath();
+  });
 }
 
 /**
@@ -392,7 +474,6 @@ export class TableScene extends Phaser.Scene {
     const players = activePlayerIds(config);
     this.boardLayer.removeAll(true);
     const homeFieldSize = HOME_FIELD_DIAMETER * this.pieceScale;
-    const goalFieldSize = GOAL_FIELD_DIAMETER * this.pieceScale;
     const trackTileScale = this.pieceScale * TRACK_TILE_GAP * Math.min(1, REFERENCE_TRACK_LENGTH / trackLength);
 
     for (let i = 0; i < trackLength; i++) {
@@ -408,7 +489,6 @@ export class TableScene extends Phaser.Scene {
     // Points span 0..size (top-left origin) - add.polygon re-centers them on x/y itself, so
     // x/y below is the field's center, same as every other shape call here.
     const homeFieldPoints = chamferedSquarePoints(homeFieldSize, FIELD_CHAMFER_RATIO);
-    const goalFieldPoints = chamferedSquarePoints(goalFieldSize, FIELD_CHAMFER_RATIO);
 
     players.forEach((player) => {
       // Kennel: a black-bordered socket a little larger than a marble, so the piece visibly
@@ -421,18 +501,17 @@ export class TableScene extends Phaser.Scene {
             .setStrokeStyle(2, MARBLE_BORDER_COLOR, 1),
         );
       }
-      // Goal slots: the same chamfered shape, smaller, with a faint white fill so an
-      // occupied slot doesn't hide the marble in it. The colored outline alone marks whose
-      // goal it is, which is what makes "where do I need to get to" read at a glance.
+      // Goal slots: the base-guard's corner brackets turned 45deg into a diamond, in the
+      // owner's color. Brackets rather than a filled field so an occupied slot never hides the
+      // marble in it, and the color alone marks whose goal it is - "where do I need to get to"
+      // at a glance. One Graphics per player: these never move or animate individually.
+      const goalMarks = this.add.graphics();
+      const color = hueToHex(this.colorAssignment[player]);
       for (let slot = 0; slot < HOME_STRETCH_LENGTH; slot++) {
         const { x, y } = homeSlotPoint(config, player, slot, this.geo);
-        const color = hueToHex(this.colorAssignment[player]);
-        this.boardLayer!.add(
-          this.add
-            .polygon(x, y, goalFieldPoints, PALETTE.ink, 0.16)
-            .setStrokeStyle(2, color, 0.85),
-        );
+        drawGoalDiamond(goalMarks, x, y, this.pieceScale, color);
       }
+      this.boardLayer!.add(goalMarks);
     });
   }
 
@@ -608,42 +687,15 @@ export class TableScene extends Phaser.Scene {
   }
 
   /**
-   * Redraws `mark` as four corner brackets centered on its own origin, at current scale.
-   *
-   * Every dimension is rounded to whole pixels, and so is the position this is drawn at (see
-   * updateGuards). Phaser's `pixelArt: true` only turns off smoothing for drawImage - a
-   * Graphics fillRect is a real Canvas2D path and antialiases on fractional coordinates
-   * regardless. That matters here more than anywhere else on the board: a 1px dark edge split
-   * across two rows renders at roughly half alpha, and over a light marble the blend lands
-   * around 2.5:1 - failing exactly when the frame overlaps a neighbour, which is the case the
-   * dark edge exists for. The reticle never moves, so rounding costs nothing.
+   * Redraws `mark` as four corner brackets centered on its own origin, at current scale. The
+   * position it's drawn at is rounded too (see updateGuards) - the reticle never moves, so
+   * whole-pixel placement costs nothing. See drawCornerBrackets for why that matters.
    */
   private drawGuardBrackets(mark: Phaser.GameObjects.Graphics) {
-    const scale = this.pieceScale;
-    const half = Math.round((MARBLE_SIZE / 2 + GUARD_GAP) * scale);
-    const arm = Math.round(Math.max(GUARD_MIN_ARM, GUARD_ARM * scale));
-    const weight = Math.round(Math.max(GUARD_MIN_WEIGHT, GUARD_WEIGHT * scale));
-    const outline = Math.round(Math.max(1, GUARD_OUTLINE * scale));
-
-    // Each corner is one horizontal and one vertical arm sharing an outer corner pixel.
-    const arms: [number, number, number, number][] = [];
-    for (const sx of [-1, 1]) {
-      for (const sy of [-1, 1]) {
-        for (const [w, h] of [[arm, weight], [weight, arm]] as const) {
-          arms.push([sx > 0 ? half - w : -half, sy > 0 ? half - h : -half, w, h]);
-        }
-      }
-    }
-
-    // Every outline first, then every core - not outline-then-core per arm. Drawn per arm, the
-    // second arm's outline paints a dark seam straight through the corner the two share, and
-    // the bracket reads as two detached ticks instead of one L.
     mark.clear();
-    mark.fillStyle(MARBLE_BORDER_COLOR, 1);
-    for (const [x, y, w, h] of arms) mark.fillRect(x - outline, y - outline, w + outline * 2, h + outline * 2);
-    mark.fillStyle(PALETTE.ink, 1);
-    for (const [x, y, w, h] of arms) mark.fillRect(x, y, w, h);
+    drawCornerBrackets(mark, 0, 0, MARBLE_SIZE / 2 + GUARD_GAP, this.pieceScale, PALETTE.ink);
   }
+
 
   /**
    * Walks a marble through each track index in sequence, then into its home slot if the move
