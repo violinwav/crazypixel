@@ -6,7 +6,7 @@
         marbles (player colors), never for backgrounds, panels, buttons or tiles.
      2. Rule ORDER is load-bearing in places. Several selectors here tie on
         specificity and are resolved by source order alone - the combined
-        selectors (.playing-card.hand-panel__card, .cp-button.board-status__pass)
+        selectors (.playing-card.hand-panel__card, .cp-button.hand-panel__lay-down)
         say so at their own rules. Don't reorder blocks without reading those.
 
    Sections:
@@ -305,16 +305,75 @@ body {
 
 .hand-panel__cards {
   display: flex;
-  flex-wrap: nowrap;
   justify-content: center;
   align-items: center;
-  gap: 8px;
   width: 100%;
+  /* Positioning context for .hand-panel__lay-down. */
+  position: relative;
+  /* The query container the card width below is measured against (100cqw). A plain 100% would
+     resolve against .hand-panel__frame instead, which shrink-wraps the cards - a width that
+     depends on itself. */
+  container-type: inline-size;
 }
 
-/* A fixed 1/6th-of-the-row width, not flex-grow dividing space among however many cards are
-   in hand: 2 cards and 6 cards render at the same size, while all 6 (the max, see
-   ROUND_DEAL_SIZES) still fit one row without wrapping on a narrow phone.
+.hand-panel__frame {
+  position: relative;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Viewfinder corners around your hand on your own turn, until you pick a card (GameBoard's
+   hand-panel-slot--framed) - the hand-panel counterpart of the turn label's highlight above
+   it. Painted before the cards (both are positioned, DOM order wins), so a card lifting while
+   the corners fade out overlaps them rather than the other way round. */
+.hand-panel__frame::before {
+  --frame-arm: 12px;
+  --frame-weight: 2px;
+  --frame-color: var(--ink);
+  content: '';
+  position: absolute;
+  /* A card's focus ring reaches 6px out (3px offset + 3px width, .playing-card:focus-visible);
+     10px leaves a visible 2px gap, so a focused end card's ring never fuses with a corner into
+     one shape. It's also as far as this can go: the row sits only 12px above the panel's (and
+     so the screen's) bottom edge - see .hand-panel's asymmetric padding. */
+  inset: -10px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--frame-color) 0 0) top left / var(--frame-arm) var(--frame-weight),
+    linear-gradient(var(--frame-color) 0 0) top left / var(--frame-weight) var(--frame-arm),
+    linear-gradient(var(--frame-color) 0 0) top right / var(--frame-arm) var(--frame-weight),
+    linear-gradient(var(--frame-color) 0 0) top right / var(--frame-weight) var(--frame-arm),
+    linear-gradient(var(--frame-color) 0 0) bottom left / var(--frame-arm) var(--frame-weight),
+    linear-gradient(var(--frame-color) 0 0) bottom left / var(--frame-weight) var(--frame-arm),
+    linear-gradient(var(--frame-color) 0 0) bottom right / var(--frame-arm) var(--frame-weight),
+    linear-gradient(var(--frame-color) 0 0) bottom right / var(--frame-weight) var(--frame-arm);
+  background-repeat: no-repeat;
+  opacity: 0;
+  /* Same 300ms as .hand-panel__background, so the two land together. */
+  transition: opacity 300ms ease;
+}
+
+.hand-panel-slot--framed .hand-panel__frame::before {
+  opacity: 1;
+}
+
+/* Stuck with no legal move: the frame takes the "Lay down cards" button's own red, so the hand
+   reads as the thing that has to go. Not the only cue - the button says it in words. */
+.hand-panel-slot--lay-down .hand-panel__frame::before {
+  --frame-color: var(--player-red);
+}
+
+/* An empty hand has nothing to frame - without this the corners collapse into a lone 20px box. */
+.hand-panel__frame:empty::before {
+  display: none;
+}
+
+/* A fixed 1/6th-of-the-row width (100cqw - see .hand-panel__cards), not flex-grow dividing
+   space among however many cards are in hand: 2 cards and 6 cards render at the same size,
+   while all 6 (the max, see ROUND_DEAL_SIZES) still fit one row without wrapping on a narrow
+   phone.
 
    THE COMBINED SELECTOR IS DELIBERATE. .playing-card's own plain-class width:80px rule sits
    AFTER this one in the file and ties on specificity, so a single-class selector here loses
@@ -322,7 +381,12 @@ body {
    viewport - cards overflowing off both edges of a 375px phone. Keep the two classes. */
 .playing-card.hand-panel__card {
   flex: 0 0 auto;
-  width: calc((100% - 5 * 8px) / 6);
+  /* Fallback for browsers without container units (Safari < 16): the row's width, less the
+     panel's 2 * 14px padding, approximated from the viewport, which the panel spans. Without
+     it the whole declaration drops and .playing-card's fixed 80px wins - six cards overflowing
+     a phone. */
+  width: calc((100vw - 28px - 5 * 8px) / 6);
+  width: calc((100cqw - 5 * 8px) / 6);
   max-width: 80px;
 }
 
@@ -556,26 +620,33 @@ body {
   animation: opponent-fan-pop 280ms ease-out both;
 }
 
-/* The pass-hand fallback, anchored between the discard pile and the ring's bottom edge (see
-   BoardStatus.tsx). */
-.board-status__pass {
+/* The pass-hand fallback, laid over the middle of the hand it gives up (HandPanel's overlay,
+   inside .hand-panel__cards). It only shows when every card is dimmed and inert, so it covers
+   nothing playable, and it puts the way out where the player is already looking for a move.
+   The outlined-red treatment matches .board-overlay__seven-reset: what a control that is
+   available but not the happy path looks like here - a filled primary would push the player
+   toward it, and this is a way out of being stuck, not a recommendation. Unlike that row it
+   keeps .cp-button's 44px touch floors: zeroed, it shrinks to ~31px tall, under the minimum,
+   for the only thing a stuck player can tap. */
+.hand-panel__lay-down {
   position: absolute;
+  left: 50%;
+  top: 50%;
   transform: translate(-50%, -50%);
-  /* Matches .board-overlay__seven-reset's font-size, padding, border and label color - the
-     outlined-red treatment, which is what a board control that is available but not the happy
-     path looks like here. Seven-CONFIRM is the filled green one and deliberately not the model:
-     a filled primary is the one action the player is being pushed toward, and this is a way out
-     of being stuck, not a recommendation. The one thing deliberately NOT copied from that row is
-     its min-width/min-height: 0. Those buttons sit
-     in a cramped overlay row where the 44px floors break the layout; this is a standalone
-     control with room around it, and zeroing them here shrinks it to roughly 31px tall - under
-     the touch-target minimum, for the only thing a stuck player can tap. */
   font-size: 0.8rem;
   padding: 0.4em 0.8em;
-  border-color: var(--card-red);
-  color: var(--card-red);
+  /* See-through, so the hand stays visible under it. Dark rather than .cp-button's white fill,
+     over cards already dimmed toward black. The fill alone can't guarantee the text's contrast
+     over whatever card art is behind it, so the label carries the same black outline as
+     .turn-label, for the same reason. --player-red rather than --card-red: the 0-card badge's
+     reasoning - --card-red is only 4.2:1 against black. No drop shadow: under a translucent
+     fill it reads as a solid slab showing through. */
+  background: rgba(0, 0, 0, 0.45);
+  border-color: var(--player-red);
+  color: var(--player-red);
+  text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+  box-shadow: none;
   white-space: nowrap;
-  pointer-events: auto;
   z-index: 10;
   /* iOS Safari can spend ~300ms deciding whether a tap is the first half of a
      double-tap-to-zoom. `manipulation` tells it this element never needs that gesture, so a
@@ -589,9 +660,11 @@ body {
    is pressed, jumping by half its own size, which is also why only taps landing on the side
    it jumps toward still registered: the box moves out from under a touch that started
    anywhere else before touchend's hit-test runs. Re-stating both transforms together, at
-   higher specificity, keeps the press nudge additive. */
-.cp-button.board-status__pass:active {
+   higher specificity, keeps the press nudge additive. The shadow is re-stated for the same
+   reason - .cp-button:active would otherwise bring back the drop shadow dropped above. */
+.cp-button.hand-panel__lay-down:active {
   transform: translate(calc(-50% + 3px), calc(-50% + 3px));
+  box-shadow: none;
 }
 
 /* Whose turn it is, overlaying the top edge of the hand panel rather than sitting in flow
@@ -624,6 +697,18 @@ body {
 
 .turn-label--visible {
   opacity: 1;
+}
+
+/* On your own turn the label's text sits in a tag of your own color - inverse video for just
+   the line that's about you. Inline, so the padding paints without moving the line. No
+   transition of its own: TurnLabel swaps this class while the label is faded out, so the
+   label's crossfade is the fade. Dark text with no outline, and the name in a dark variant of
+   its hue (hueToStrongTextCss), since the light ones used on black wash out on a pastel. */
+.turn-label__text--highlight {
+  padding: 2px 6px;
+  background: var(--turn-label-highlight);
+  color: var(--bg-deep);
+  text-shadow: none;
 }
 
 /* Whose turn, in their own color - hueToTextCss's lighter variant, since the pastel marble
@@ -2119,7 +2204,7 @@ canvas {
   min-width: var(--target-min-touch);
   padding: 0;
   font-size: 15px;
-  /* Sits over the board's live area - same reason as .board-status__pass. */
+  /* Sits over the board's live area - same reason as .hand-panel__lay-down. */
   touch-action: manipulation;
   /* No z-index on purpose. GameBoard.tsx places this whole HUD before the game overlays in DOM
      order so it stacks behind them; any positive z-index here would lift it back over

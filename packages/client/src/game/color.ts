@@ -55,3 +55,45 @@ const TEXT_LIGHTNESS = 82;
 export function hueToTextCss(hue: number): string {
   return `hsl(${((hue % 360) + 360) % 360} ${TEXT_SATURATION}% ${TEXT_LIGHTNESS}%)`;
 }
+
+// The dark-on-pastel counterpart to hueToTextCss, for a name on the turn label's highlight
+// (.turn-label__text--highlight), which is filled with the viewer's own pastel (hueToCss). No single lightness works here: the
+// pastels' luminance swings ~3.5x around the wheel (blue darkest, yellow lightest), and so does
+// the text's at any fixed L. Each hue instead walks down to the brightest lightness that still
+// clears AA against that particular pastel - as vivid as it can be while staying legible. On
+// blue that lands near-navy; on yellow, a clear olive. The target sits a hair above 4.5:1
+// so 8-bit rounding in the browser can't tip a borderline pair under it.
+const STRONG_SATURATION = 90;
+const STRONG_MAX_LIGHTNESS = 50;
+const STRONG_MIN_CONTRAST = 4.6;
+
+function channelLuminance(c255: number): number {
+  const s = c255 / 255;
+  return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+}
+
+function luminanceOf(r: number, g: number, b: number): number {
+  return 0.2126 * channelLuminance(r) + 0.7152 * channelLuminance(g) + 0.0722 * channelLuminance(b);
+}
+
+/** Text color for `hue` on a fill of `backgroundHue`'s pastel - see the note above. */
+export function hueToStrongTextCss(hue: number, backgroundHue: number): string {
+  const bg = hueToHex(backgroundHue);
+  const bgLuminance = luminanceOf(bg >> 16, (bg >> 8) & 0xff, bg & 0xff);
+  const h = ((hue % 360) + 360) % 360;
+  const s = STRONG_SATURATION / 100;
+  for (let lightness = STRONG_MAX_LIGHTNESS; lightness > 0; lightness -= 1) {
+    const l = lightness / 100;
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    const luminance = luminanceOf(
+      Math.round(hueToRgb(p, q, h / 360 + 1 / 3) * 255),
+      Math.round(hueToRgb(p, q, h / 360) * 255),
+      Math.round(hueToRgb(p, q, h / 360 - 1 / 3) * 255),
+    );
+    if ((bgLuminance + 0.05) / (luminance + 0.05) >= STRONG_MIN_CONTRAST) {
+      return `hsl(${h} ${STRONG_SATURATION}% ${lightness}%)`;
+    }
+  }
+  return '#000000';
+}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { getLegalMoves } from '@crazypixel/shared';
 import type { Card, GameState, PlayerId } from '@crazypixel/shared';
 import { CARD_FACE_SPRITE } from './game/cardArt';
@@ -45,6 +45,9 @@ interface Props {
    * empty gap, and a primitive keeps the open/close effect from re-firing on every parent
    * render. */
   incomingSlotWidth?: number | null;
+  /** A control laid over the middle of the card row - GameBoard's "Lay down cards" when nothing
+   * in hand can move. Inside the "Your hand" group, since it acts on the whole hand. */
+  overlay?: ReactNode;
 }
 
 /**
@@ -56,7 +59,7 @@ interface Props {
  * Card art is keyed by rank only and applied as a background-image, so the display-font rank
  * text can sit crisply on top of it.
  */
-export function HandPanel({ state, player, interactive, selectedCardId, onSelectCard, stolenGhost, hiddenCardId, incomingSlotWidth }: Props) {
+export function HandPanel({ state, player, interactive, selectedCardId, onSelectCard, stolenGhost, hiddenCardId, incomingSlotWidth, overlay }: Props) {
   const hand = state.hands[player].filter((c) => c.id !== hiddenCardId);
   // The ghost is spliced back in at its old index rather than appended: a steal takes a specific
   // card from a specific position, and re-inserting it anywhere else would move every card next
@@ -89,63 +92,68 @@ export function HandPanel({ state, player, interactive, selectedCardId, onSelect
   return (
     <section className="hand-panel">
       <div role="group" aria-label="Your hand" className="hand-panel__cards">
-        {slots.map(({ card, ghost }) => {
-          if (ghost) {
+        {/* Shrink-wraps the cards so the turn's corner brackets (.hand-panel__frame::before) hug
+            however many there are, rather than the full-width row. */}
+        <div className="hand-panel__frame">
+          {slots.map(({ card, ghost }) => {
+            if (ghost) {
+              return (
+                <div
+                  key={`stolen:${card.id}`}
+                  data-card-id={card.id}
+                  className="playing-card hand-panel__card hand-panel__card--stolen"
+                  style={{ '--card-face': `url(${CARD_FACE_SPRITE[card.rank]})` } as CSSProperties}
+                  aria-hidden="true"
+                >
+                  <CardRankIndices rank={card.rank} />
+                </div>
+              );
+            }
+            // getLegalMoves isn't turn-aware - it will happily compute moves for a player who
+            // isn't state.currentPlayer - so `interactive` is what actually reflects whether it is
+            // this hand's turn.
+            const hasMoves = interactive && getLegalMoves(state, player, card).length > 0;
+            const isSelected = selectedCardId === card.id;
             return (
-              <div
-                key={`stolen:${card.id}`}
+              <button
+                key={card.id}
+                type="button"
                 data-card-id={card.id}
-                className="playing-card hand-panel__card hand-panel__card--stolen"
+                className={`playing-card hand-panel__card${!hasMoves && settled ? ' playing-card--dim' : ''}`}
                 style={{ '--card-face': `url(${CARD_FACE_SPRITE[card.rank]})` } as CSSProperties}
-                aria-hidden="true"
+                aria-pressed={isSelected}
+                aria-label={`${card.rank} of ${card.suit ?? 'no suit'}${hasMoves ? '' : ', no legal moves'}`}
+                // aria-disabled, NOT the native attribute: Chromium and WebKit skip CSS
+                // transitions entirely on disabled form controls, so the dim fade always cut
+                // instantly regardless of the settle timer. This keeps the same "not a legal move"
+                // semantics for assistive tech while staying a real, transitionable element - the
+                // click guard below is what actually blocks the illegal play.
+                aria-disabled={!hasMoves}
+                // A card with no legal move stays a real focusable element (see the aria-disabled
+                // comment above) but shouldn't stay a TAB stop - previously only reachable when
+                // hasMoves was false during someone else's fixed hand online; fixed mySeat now
+                // makes this the default state for most of a local bot's turn too, so a keyboard/
+                // screen-reader user would otherwise hit a wall of dead buttons every bot turn.
+                tabIndex={hasMoves ? 0 : -1}
+                onClick={() => {
+                  if (!hasMoves) return;
+                  onSelectCard(isSelected ? null : card.id);
+                }}
               >
                 <CardRankIndices rank={card.rank} />
-              </div>
+              </button>
             );
-          }
-          // getLegalMoves isn't turn-aware - it will happily compute moves for a player who
-          // isn't state.currentPlayer - so `interactive` is what actually reflects whether it is
-          // this hand's turn.
-          const hasMoves = interactive && getLegalMoves(state, player, card).length > 0;
-          const isSelected = selectedCardId === card.id;
-          return (
-            <button
-              key={card.id}
-              type="button"
-              data-card-id={card.id}
-              className={`playing-card hand-panel__card${!hasMoves && settled ? ' playing-card--dim' : ''}`}
-              style={{ '--card-face': `url(${CARD_FACE_SPRITE[card.rank]})` } as CSSProperties}
-              aria-pressed={isSelected}
-              aria-label={`${card.rank} of ${card.suit ?? 'no suit'}${hasMoves ? '' : ', no legal moves'}`}
-              // aria-disabled, NOT the native attribute: Chromium and WebKit skip CSS
-              // transitions entirely on disabled form controls, so the dim fade always cut
-              // instantly regardless of the settle timer. This keeps the same "not a legal move"
-              // semantics for assistive tech while staying a real, transitionable element - the
-              // click guard below is what actually blocks the illegal play.
-              aria-disabled={!hasMoves}
-              // A card with no legal move stays a real focusable element (see the aria-disabled
-              // comment above) but shouldn't stay a TAB stop - previously only reachable when
-              // hasMoves was false during someone else's fixed hand online; fixed mySeat now
-              // makes this the default state for most of a local bot's turn too, so a keyboard/
-              // screen-reader user would otherwise hit a wall of dead buttons every bot turn.
-              tabIndex={hasMoves ? 0 : -1}
-              onClick={() => {
-                if (!hasMoves) return;
-                onSelectCard(isSelected ? null : card.id);
-              }}
-            >
-              <CardRankIndices rank={card.rank} />
-            </button>
-          );
-        })}
-        {incomingSlotWidth ? (
-          <span
-            data-incoming-slot
-            className={`hand-panel__slot${slotOpen ? ' hand-panel__slot--open' : ''}`}
-            style={{ width: slotOpen ? incomingSlotWidth : 0 }}
-            aria-hidden="true"
-          />
-        ) : null}
+          })}
+          {incomingSlotWidth ? (
+            <span
+              data-incoming-slot
+              className={`hand-panel__slot${slotOpen ? ' hand-panel__slot--open' : ''}`}
+              style={{ width: slotOpen ? incomingSlotWidth : 0 }}
+              aria-hidden="true"
+            />
+          ) : null}
+        </div>
+        {overlay}
       </div>
     </section>
   );

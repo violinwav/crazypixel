@@ -39,7 +39,7 @@ const HAND_CARD_GAP = 8;
  * panel is a full-width sibling of the board, so they share it).
  *
  * Mirrors .playing-card.hand-panel__card's responsive formula in theme.css exactly
- * (`calc((100% - 5*8px)/6)` capped at 80px) rather than approximating it, so anything sized
+ * (`calc((100cqw - 5*8px)/6)` capped at 80px) rather than approximating it, so anything sized
  * off this shrinks in lockstep with the real hand cards on a narrow phone instead of staying
  * board-scale. Used by every renderer that has to match a hand card's size: LaidCard.tsx,
  * DealAnimation.tsx, the rank picker, and TableScene's own Phaser draw/discard stacks.

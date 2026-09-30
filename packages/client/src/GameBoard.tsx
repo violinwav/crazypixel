@@ -7,9 +7,9 @@
 // mySeat === state.currentPlayer, which is always true in hotseat and is how online play hides
 // other players' hands.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
-import { activePlayerIds, emoteById, trackLengthFor } from '@crazypixel/shared';
+import { activePlayerIds, emoteById, getLegalMoves, trackLengthFor } from '@crazypixel/shared';
 import type { Card, GameConfig, GameState, Move, PlayerId } from '@crazypixel/shared';
 import { createPhaserGame } from './game/PhaserGame';
 import type { PhaserBridge } from './game/PhaserGame';
@@ -17,7 +17,6 @@ import type { TurnAnimation } from './game/animationPlan';
 import { computeBoardGeometry, discardPileCenter, drawPileCenter, handCountPoint } from './game/boardLayout';
 import { HandPanel } from './HandPanel';
 import { BoardOverlay } from './BoardOverlay';
-import { BoardStatus } from './BoardStatus';
 import { BoardGuards } from './BoardGuards';
 import { OpponentHandCounts } from './OpponentHandCounts';
 import { LaidCard } from './LaidCard';
@@ -209,6 +208,13 @@ export function GameBoard({
   // controls with nothing visible on screen. The winning seat stays `currentPlayer` now that
   // advanceTurn leaves a finished game alone, so this is what makes their board go inert.
   const isMyTurn = mySeat === state.currentPlayer && state.phase !== 'gameEnd';
+  // Nothing in hand has a legal move, so laying the hand down is the only way on. One value for
+  // both places that show it - the "Lay down cards" button and the hand frame turning red - so
+  // they can't disagree. Memoized: a whole hand's getLegalMoves includes the 7-split search.
+  const mustLayDown = useMemo(
+    () => isMyTurn && !state.hands[state.currentPlayer].some((c) => getLegalMoves(state, state.currentPlayer, c).length > 0),
+    [state, isMyTurn],
+  );
 
   useEffect(() => {
     if (!canvasMountRef.current || bridgeRef.current) return;
@@ -616,8 +622,7 @@ export function GameBoard({
         {/* role="img" is scoped to the Phaser canvas alone, NOT the whole board area. `img` is a
             children-presentational role: everything inside it is pruned from the accessibility
             tree, so while this label sat on the container it silently swallowed every real
-            control positioned over the canvas - the move buttons, "Lay down cards", the emote
-            picker - leaving a screen reader one flat "Game board, image" node and no way to
+            control positioned over the canvas - the move buttons, the emote picker - leaving a screen reader one flat "Game board, image" node and no way to
             play. The canvas gets its own mount element; the DOM layer stays a sibling of it,
             sharing the container's coordinate system exactly as before. */}
         <div
@@ -696,7 +701,6 @@ export function GameBoard({
             onStealIncoming={setIncomingCard}
           />
         )}
-        {isMyTurn && <BoardStatus state={state} containerSize={containerSize} onPassHand={passCurrentHand} viewerSeat={viewerSeat} />}
       </div>
       {/* Board changes are narrated from here, not by the canvas - the canvas has no way to
           expose them to assistive tech, this text does. */}
@@ -723,7 +727,12 @@ export function GameBoard({
           ))}
         </div>
       )}
-      <div ref={handPanelRef} className="hand-panel-slot">
+      <div
+        ref={handPanelRef}
+        // Framed until a card is picked: from then on the selected card's own outline is what
+        // marks the hand as live, and the corners would just be a second frame around it.
+        className={`hand-panel-slot${isMyTurn && selectedCardId === null ? ' hand-panel-slot--framed' : ''}${mustLayDown ? ' hand-panel-slot--lay-down' : ''}`}
+      >
         {/* The same vivid dither as the menu background, tinted to your own seat color - the
             app-wide background behind the board keeps the calmer single-tone look, so this is a
             second independent PixelDither instance rather than a change to the shared one.
@@ -747,7 +756,12 @@ export function GameBoard({
               settled={stealPresentation !== null}
             />
           ) : (
-            <TurnLabel player={state.currentPlayer} playerNames={playerNames} colors={colors} />
+            <TurnLabel
+              player={state.currentPlayer}
+              playerNames={playerNames}
+              colors={colors}
+              highlightHue={isMyTurn ? colors[mySeat] : undefined}
+            />
           )}
           {turnDeadline !== undefined && <TurnTimerBar deadline={turnDeadline} isMyTurn={isMyTurn} />}
           <HandPanel
@@ -761,6 +775,11 @@ export function GameBoard({
             stolenGhost={stealPresentation?.stage === 'marked' ? stealPresentation : null}
             hiddenCardId={stealCommit?.card.id ?? null}
             incomingSlotWidth={incomingSlotWidth}
+            overlay={mustLayDown ? (
+              <button type="button" className="cp-button hand-panel__lay-down" onClick={passCurrentHand}>
+                Lay down cards
+              </button>
+            ) : null}
           />
         </div>
       </div>
