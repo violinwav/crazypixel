@@ -626,6 +626,12 @@ body {
   opacity: 1;
 }
 
+/* Whose turn, in their own color - hueToTextCss's lighter variant, since the pastel marble
+   hue isn't legible as text. The black outline is inherited from .turn-label. */
+.turn-label__who {
+  color: var(--turn-label-color, var(--ink));
+}
+
 /* Countdown strip just below .turn-label (TurnTimerBar.tsx). Online only, and cosmetic - the
    server enforces the real timeout. A reversed loading bar: starts full and shrinks. */
 .turn-timer {

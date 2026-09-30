@@ -747,7 +747,7 @@ export function GameBoard({
               settled={stealPresentation !== null}
             />
           ) : (
-            <TurnLabel player={state.currentPlayer} playerNames={playerNames} />
+            <TurnLabel player={state.currentPlayer} playerNames={playerNames} colors={colors} />
           )}
           {turnDeadline !== undefined && <TurnTimerBar deadline={turnDeadline} isMyTurn={isMyTurn} />}
           <HandPanel

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { hueToTextCss } from './game/color';
 import { playerLabel } from './game/playerName';
 
 // Half of the crossfade: hold the old name out for this long, then swap and fade the new one
@@ -8,6 +10,8 @@ const SWAP_MS = 220;
 interface Props {
   player: number;
   playerNames?: string[];
+  /** Seat hues, for coloring the `<NAME>` marker. */
+  colors: number[];
 }
 
 /**
@@ -18,7 +22,7 @@ interface Props {
  *
  * aria-hidden: GameBoard's aria-live region already announces the turn.
  */
-export function TurnLabel({ player, playerNames }: Props) {
+export function TurnLabel({ player, playerNames, colors }: Props) {
   const [displayPlayer, setDisplayPlayer] = useState(player);
   const [visible, setVisible] = useState(true);
 
@@ -34,7 +38,15 @@ export function TurnLabel({ player, playerNames }: Props) {
 
   return (
     <p className={`turn-label${visible ? ' turn-label--visible' : ''}`} aria-hidden="true">
-      {playerLabel(playerNames, displayPlayer).toUpperCase()}&apos;S TURN
+      {/* Keyed to displayPlayer, not player, so the color swaps with the name mid-fade
+          instead of repainting the outgoing name in the incoming player's color. */}
+      <span
+        className="turn-label__who"
+        style={{ '--turn-label-color': hueToTextCss(colors[displayPlayer]) } as CSSProperties}
+      >
+        &lt;{playerLabel(playerNames, displayPlayer).toUpperCase()}&gt;
+      </span>
+      &apos;S TURN
     </p>
   );
 }
