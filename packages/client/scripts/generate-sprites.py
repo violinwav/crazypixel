@@ -426,6 +426,36 @@ def _icon_crown(draw, cx, cy, ink):
     )
 
 
+def _draw_pips(draw, cx, cy, ink, coords, size=3):
+    half = size // 2
+    for dx, dy in coords:
+        x, y = cx + dx, cy + dy
+        draw.rectangle([x - half, y - half, x + half, y + half], fill=(*ink, 255))
+
+
+# Plain ranks get no hand-drawn icon, just a pip count - same idea as a real deck's suit pips.
+# Odd counts (3, 5) use the diagonal/quincunx layouts a real deck uses for those counts; even
+# counts (6, 9, 10) are plain grids. Q has no face value of its own in a standard deck, but this
+# game's rules give it one (constants.ts: Q moves 12 squares), so it gets a 12-pip grid instead
+# of a hand-drawn face icon. Coordinates are (dx, dy) offsets from card center.
+_PIP_LAYOUTS = {
+    "3": [(-9, -13), (0, 0), (9, 13)],
+    "5": [(-9, -12), (9, -12), (0, 0), (-9, 12), (9, 12)],
+    "6": [(-9, -12), (9, -12), (-9, 0), (9, 0), (-9, 12), (9, 12)],
+    "9": [(dx, dy) for dy in (-12, 0, 12) for dx in (-9, 0, 9)],
+    "10": [(dx, dy) for dx in (-9, 9) for dy in (-16, -8, 0, 8, 16)],
+    "Q": [(dx, dy) for dy in (-12, -4, 4, 12) for dx in (-9, 0, 9)],
+}
+
+# Joker has no rank value to count, so it gets a sparkle instead of a pip grid - "wild" rather
+# than a number. Drawn in bg_deep then a smaller pass in ink, so the outline keeps it legible
+# over every color in the dithered mosaic underneath, not just whichever one sits under a pip.
+_JOKER_SPARKLE = [
+    (0, 0), (0, -8), (0, 8), (-8, 0), (8, 0),
+    (-6, -6), (6, -6), (-6, 6), (6, 6),
+]
+
+
 def _make_joker_face():
     # Craziest of all - a dithered mosaic of every player color, no icon needed.
     g = Image.new("RGBA", (CARD_W, CARD_H), (*PALETTE["bg_deep"], 255))
@@ -454,7 +484,11 @@ _ICON_CARDS = {
 
 def make_card_face(rank):
     if rank == "JOKER":
-        return _make_joker_face()
+        g = _make_joker_face()
+        draw = ImageDraw.Draw(g)
+        _draw_pips(draw, CARD_W // 2, CARD_H // 2, PALETTE["bg_deep"], _JOKER_SPARKLE, size=5)
+        _draw_pips(draw, CARD_W // 2, CARD_H // 2, PALETTE["ink"], _JOKER_SPARKLE, size=3)
+        return g
     if rank in _ICON_CARDS:
         palette_key, draw_icon = _ICON_CARDS[rank]
         color = PALETTE[palette_key]
@@ -463,7 +497,9 @@ def make_card_face(rank):
         cy_offset = 4 if rank == "7" else 0
         draw_icon(draw, CARD_W // 2, CARD_H // 2 + cy_offset, _icon_color(color))
         return g
-    g, _ = _card_base(PALETTE["card_plain"][rank])
+    color = PALETTE["card_plain"][rank]
+    g, draw = _card_base(color)
+    _draw_pips(draw, CARD_W // 2, CARD_H // 2, _icon_color(color), _PIP_LAYOUTS[rank])
     return g
 
 
