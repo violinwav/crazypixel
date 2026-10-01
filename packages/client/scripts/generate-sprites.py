@@ -434,17 +434,27 @@ def _draw_pips(draw, cx, cy, ink, coords, size=3):
 
 
 # Plain ranks get no hand-drawn icon, just a pip count - same idea as a real deck's suit pips.
-# Odd counts (3, 5) use the diagonal/quincunx layouts a real deck uses for those counts; even
-# counts (6, 9, 10) are plain grids. Q has no face value of its own in a standard deck, but this
-# game's rules give it one (constants.ts: Q moves 12 squares), so it gets a 12-pip grid instead
-# of a hand-drawn face icon. Coordinates are (dx, dy) offsets from card center.
+# Q has no face value of its own in a standard deck, but this game's rules give it one
+# (constants.ts: Q moves 12 squares), so it gets a 12-pip rosette instead of a hand-drawn face
+# icon.
+#
+# Rank text (CardRankIndices.tsx) sits in the TOP-LEFT and BOTTOM-RIGHT corners only - so pips
+# are built from just 6 of 8 compass directions (N, S, E, W, NE, SW), skipping NW and SE
+# entirely. No pip ever has (dx<0 and dy<0) or (dx>0 and dy>0) at once, so none can land under
+# the rank text regardless of exact font metrics. Two concentric rings of those 6 directions,
+# plus a center dot for odd counts, give every plain rank a star/rosette instead of a dice grid -
+# keeping the diamond-motif look used elsewhere in this sprite set (goal fields, kennel slots).
+_RING1 = {"N": (0, -9), "S": (0, 9), "E": (9, 0), "W": (-9, 0), "NE": (6, -8), "SW": (-6, 8)}
+_RING2 = {"N": (0, -17), "S": (0, 17), "E": (14, 0), "W": (-14, 0), "NE": (9, -12), "SW": (-9, 12)}
+_CENTER = (0, 0)
+
 _PIP_LAYOUTS = {
-    "3": [(-9, -13), (0, 0), (9, 13)],
-    "5": [(-9, -12), (9, -12), (0, 0), (-9, 12), (9, 12)],
-    "6": [(-9, -12), (9, -12), (-9, 0), (9, 0), (-9, 12), (9, 12)],
-    "9": [(dx, dy) for dy in (-12, 0, 12) for dx in (-9, 0, 9)],
-    "10": [(dx, dy) for dx in (-9, 9) for dy in (-16, -8, 0, 8, 16)],
-    "Q": [(dx, dy) for dy in (-12, -4, 4, 12) for dx in (-9, 0, 9)],
+    "3": [_RING1["NE"], _CENTER, _RING1["SW"]],
+    "5": [_CENTER, _RING1["N"], _RING1["S"], _RING1["E"], _RING1["W"]],
+    "6": list(_RING1.values()),
+    "9": list(_RING1.values()) + [_RING2["NE"], _RING2["SW"], _CENTER],
+    "10": list(_RING1.values()) + [_RING2["N"], _RING2["S"], _RING2["E"], _RING2["W"]],
+    "Q": list(_RING1.values()) + list(_RING2.values()),
 }
 
 # Joker has no rank value to count, so it gets a sparkle instead of a pip grid - "wild" rather
